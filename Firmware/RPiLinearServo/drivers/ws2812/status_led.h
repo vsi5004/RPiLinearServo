@@ -8,7 +8,8 @@
 #include "pico/types.h"
 
 enum class LedStatus {
-    OFF,            // Motor disabled — LED dark
+    OFF,            // LED dark
+    IDLE,           // Motor disabled, waiting — breathing amber
     HOLDING,        // Enabled, idle — solid green
     MOVING,         // Moving to target — solid blue
     HOMING,         // Homing active — rapid flash blue

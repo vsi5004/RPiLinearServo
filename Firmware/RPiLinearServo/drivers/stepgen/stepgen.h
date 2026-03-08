@@ -61,6 +61,10 @@ int32_t stepgen_get_position();
 /// Zero the position counter.
 void stepgen_reset_position();
 
+/// Set the position counter to an arbitrary value.
+/// Used to restore position from NVM on boot.
+void stepgen_set_position(int32_t pos);
+
 /// @return Current step frequency in Hz (0 if stopped).
 uint32_t stepgen_get_speed_hz();
 

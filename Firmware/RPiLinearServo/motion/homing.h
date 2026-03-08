@@ -6,7 +6,11 @@
 // Safe because the linear actuator is non-backdrivable and the hard stop
 // is rated for stall current.
 
+/// true once homing_run() has completed successfully.
+extern bool g_homed;
+
 /// Run the homing sequence (blocking).
 /// Enables driver, drives toward home, backs off, resets position.
+/// Sets g_homed = true on success.
 /// @return true on success.
 bool homing_run();

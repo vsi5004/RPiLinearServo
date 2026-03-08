@@ -66,6 +66,8 @@ LedStatus status_led_get() {
 }
 
 void status_led_update() {
+    if (g_config.led_dark_mode) { led_off(); return; }
+
     uint32_t elapsed = ms_in_state();
 
     switch (s_status) {
@@ -73,6 +75,20 @@ void status_led_update() {
     case LedStatus::OFF:
         led_off();
         break;
+
+    case LedStatus::IDLE: {
+        // Brief amber pulse once every 5 s (500 ms fade up/down)
+        uint32_t phase = elapsed % 5000;
+        uint32_t bright = 0;
+        if (phase < 250)
+            bright = (phase * 32) / 250;            // ramp up
+        else if (phase < 500)
+            bright = ((500 - phase) * 32) / 250;    // ramp down
+        if (bright > 32) bright = 32;
+        // Amber ≈ (R, R*0.4, 0)
+        led_set((uint8_t)bright, (uint8_t)(bright * 2 / 5), 0);
+        break;
+    }
 
     case LedStatus::HOLDING:
         led_green();

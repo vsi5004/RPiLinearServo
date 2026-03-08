@@ -1,0 +1,56 @@
+; ── pwm_capture.pio ──────────────────────────────────────────────────────
+; PIO program to measure the HIGH time of an RC PWM signal.
+;
+; Algorithm:
+;   1. Wait for pin to go LOW  (sync to falling edge)
+;   2. Wait for pin to go HIGH (rising edge)
+;   3. Count cycles while pin is HIGH
+;   4. Push count to RX FIFO
+;   5. Wrap back to step 1
+;
+; The count loop is 2 instructions (jmp + jmp), so each count = 2 PIO
+; clock cycles.  At clk_sys = 125 MHz and clkdiv = 1.0:
+;   resolution = 2 / 125e6 = 16 ns
+;   1000 µs pulse = 62,500 counts
+;   2500 µs pulse = 156,250 counts (fits in 32-bit)
+;
+; Timeout:  if the pin stays HIGH or LOW for a very long time the counter
+;           wraps, and the CPU-side code treats out-of-range values as invalid.
+
+.program pwm_capture
+
+.wrap_target
+    wait 0 pin 0        ; [1] sync: wait for pin LOW
+    wait 1 pin 0        ; [2] wait for rising edge
+
+    mov x, ~null        ; [3] x = 0xFFFFFFFF (max count)
+count_high:
+    jmp pin count_high2 ; [4] if pin still HIGH → continue counting
+    jmp done            ; [5] pin went LOW → done
+count_high2:
+    jmp x-- count_high  ; [6] decrement x, loop
+done:
+    mov isr, ~x         ; [7] invert x → gives elapsed count (0xFFFFFFFF - x)
+    push noblock        ; [8] push to FIFO (drop if full)
+.wrap
+
+% c-sdk {
+static inline void pwm_capture_program_init(PIO pio, uint sm, uint offset, uint pin) {
+    pio_sm_config c = pwm_capture_program_get_default_config(offset);
+
+    // Input pin for wait / jmp pin
+    sm_config_set_in_pins(&c, pin);
+    sm_config_set_jmp_pin(&c, pin);
+
+    // No clock divider — run at full sys_clk for best resolution
+    sm_config_set_clkdiv(&c, 1.0f);
+
+    // Configure GPIO as PIO input
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, false);
+
+    // Load and go
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

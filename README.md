@@ -4,7 +4,7 @@ Closed-loop linear servo firmware for the RP2040, using a stepper-driven linear 
 
 See [Docs/SPEC.md](Docs/SPEC.md) for the full specification.
 
-## Current Stage — Stage 1
+## Current Stage — Stage 1+
 
 - PIO-based step pulse generation with IRQ-counted position tracking (exact, no drift)
 - Trapezoidal acceleration / deceleration via 1 kHz timer updating PIO clock divider
@@ -13,7 +13,11 @@ See [Docs/SPEC.md](Docs/SPEC.md) for the full specification.
 - WS2812 RGB status LED with breathing animation during homing
 - Interactive CLI over USB CDC for exercising the stepper
 - Auto-disable after configurable idle timeout
-- Config data model and NVM interface defined (stubs — flash persistence in a later stage)
+- RC PWM input via PIO capture — maps pulse width to linear position
+- Auto-home on first valid PWM signal; position tracking while homed
+- NVM persistence: homed flag and position survive power cycles (dual-slot flash with CRC32)
+- LED status: idle heartbeat (amber), holding (green), moving (blue), homing (breathing blue), error (red)
+- Dark mode option to disable LED entirely
 
 ## Hardware
 
@@ -21,7 +25,7 @@ See [Docs/SPEC.md](Docs/SPEC.md) for the full specification.
 |---|---|
 | MCU | Waveshare RP2040-Zero |
 | Driver | TMC2209 SilentStepStick |
-| Actuator | Micro stepper linear slide (~145.8 full steps / mm) |
+| Actuator | Micro stepper linear slide, 8.4 mm travel (~208.3 full steps / mm) |
 
 ### GPIO Assignments
 
@@ -34,7 +38,7 @@ See [Docs/SPEC.md](Docs/SPEC.md) for the full specification.
 | UART RX | GP5 | PDN/UART | Loopback on bus |
 | INDEX | GP7 | INDEX | Unused (reserved) |
 | DIAG | GP9 | DIAG | Unused (reserved) |
-| PWM input | GP0 | — | RC servo signal (future) |
+| PWM input | GP0 | — | RC servo signal via PIO1/SM1 |
 | Hall sensor | GP26 | — | Analog ADC0 (future) |
 | LED | GP16 | — | WS2812 RGB via PIO1/SM0 |
 
@@ -64,6 +68,25 @@ Hardstop homing drives the motor into the mechanical end-stop for 110 % of the c
 3. Motor stalls against the hardstop; PIO keeps counting until all steps are issued
 4. Back off by `backoff_mm` with acceleration
 5. Reset position to 0, LED flashes green, then transitions to HOLDING
+
+## PWM Input
+
+The firmware senses a standard RC PWM signal (1000–2000 µs) on GP0 via PIO1/SM1 at 16 ns resolution. The pulse width is linearly mapped to a position across the configured stroke.
+
+- **Auto-home**: on the first valid PWM pulse, the servo automatically homes before tracking
+- **Position tracking**: while homed, the servo continuously follows the PWM target
+- **Timeout**: if the PWM signal is lost for more than `pwm_timeout_ms` (default 100 ms), the motor is disabled and the LED enters the idle heartbeat
+- **CLI coexistence**: the CLI remains active at all times alongside PWM control
+
+## NVM Persistence
+
+Homed state and motor position are saved to flash so the servo can resume after power loss without re-homing.
+
+- **Dual-slot A/B**: two 4 KB sectors at the end of flash (0x1F0000, 0x1F1000) with a sequence counter
+- **CRC32 validation**: each slot is verified on load; the highest valid sequence wins
+- **Throttled saves**: writes occur at most once every 30 seconds to protect flash endurance
+- **Immediate save on homing**: position is saved right after a successful home
+- **CLI**: `nvm` command shows state, `nvm save` forces a write, `nvm clear` resets stored data
 
 ## Build
 
@@ -111,6 +134,8 @@ Commands:
   pos                      Print position
   status                   Print full status
   diag                     Print TMC2209 DRV_STATUS
+  pwm                      Print PWM input status
+  nvm [save|clear]         Show / save / clear NVM data
   wreg <addr> <value>      Write TMC2209 register (hex)
   rreg <addr>              Read TMC2209 register (hex)
   help                     This message
@@ -159,13 +184,16 @@ Firmware/RPiLinearServo/
   drivers/ws2812/
     ws2812.pio              PIO WS2812 driver program
     ws2812.h / .cpp         Low-level WS2812 pixel output
-    status_led.h / .cpp     LED state machine (breathing, flash patterns)
+    status_led.h / .cpp     LED state machine (breathing, flash, heartbeat)
+  drivers/pwm_input/
+    pwm_capture.pio         PIO PWM pulse-width capture program
+    pwm_input.h / .cpp      PWM input driver (PIO1/SM1, µs conversion, validation)
   motion/
     homing.h / .cpp         Hardstop homing sequence
   cli/
     cli.h / .cpp            USB CDC command interface
   storage/
-    nvm_store.h / .cpp      NVM interface (stub)
+    nvm_store.h / .cpp      Flash-backed dual-slot NVM (CRC32, sequence counter)
 ```
 
 ## License

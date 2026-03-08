@@ -1,6 +1,6 @@
 // ── main.cpp ────────────────────────────────────────────────────────────
-// RPiLinearServo — Stage 1 firmware entry point.
-// PIO-driven stepper exercise + CLI + hardstop homing.
+// RPiLinearServo — Stage 1+ firmware entry point.
+// PIO-driven stepper exercise + CLI + hardstop homing + PWM input.
 // Driver: TMC2209 SilentStepStick via STEP/DIR + single-wire UART.
 
 #include "pins.h"
@@ -10,6 +10,7 @@
 #include "cli.h"
 #include "nvm_store.h"
 #include "tmc2209.h"
+#include "pwm_input.h"
 #include "status_led.h"
 
 #include "pico/stdlib.h"
@@ -31,6 +32,9 @@ static void print_banner() {
     printf("  STEP=GP%d  DIR=GP%d  EN=GP%d\n", PIN_STEP, PIN_DIR, PIN_EN);
     printf("  UART_TX=GP%d (via R1)  UART_RX=GP%d\n",
            PIN_UART_TX, PIN_UART_RX);
+    printf("  PWM_IN=GP%d  range=%lu–%lu µs\n",
+           PIN_PWM_IN, (unsigned long)g_config.pwm_min_us,
+           (unsigned long)g_config.pwm_max_us);
     printf("  steps/mm=%.0f  stroke=%.1f mm  microsteps=%u\n",
            g_config.steps_per_mm(), g_config.stroke_mm, g_config.microsteps);
     printf("  homing: hardstop (%.0f%% of stroke)\n",
@@ -68,9 +72,19 @@ int main() {
 
     stepgen_init(PIN_STEP, PIN_DIR);
 
-    // Load NVM (stub — returns defaults)
+    // PWM input capture (PIO1/SM1)
+    pwm_input_init(PIN_PWM_IN);
+
+    // Load NVM — restore homed state and position if valid
     NvmData nvm;
-    nvm_load(nvm);
+    if (nvm_load(nvm)) {
+        g_homed = nvm.homed;
+        if (g_homed) {
+            stepgen_set_position(nvm.position_steps);
+            printf("[nvm] restored homed=%d  pos=%ld steps\n",
+                   g_homed, (long)nvm.position_steps);
+        }
+    }
 
     // ── 4.  Banner & CLI ───────────────────────────────────────────────
     print_banner();
@@ -81,35 +95,67 @@ int main() {
     absolute_time_t idle_since = get_absolute_time();
     bool auto_disabled = false;
     LedStatus prev_led = LedStatus::OFF;
-
-    auto led_name = [](LedStatus s) -> const char* {
-        switch (s) {
-            case LedStatus::OFF:          return "OFF";
-            case LedStatus::HOLDING:      return "HOLDING";
-            case LedStatus::MOVING:       return "MOVING";
-            case LedStatus::HOMING:       return "HOMING";
-            case LedStatus::HOMING_DONE:  return "HOMING_DONE";
-            case LedStatus::STALL_FAULT:  return "STALL_FAULT";
-            case LedStatus::ERROR:        return "ERROR";
-            default:                      return "?";
-        }
-    };
+    bool pwm_was_valid  = false;
+    bool pwm_homing_triggered = false;
 
     while (true) {
         // Poll the CLI
         cli_poll();
 
+        // ── PWM input ──────────────────────────────────────────────
+        pwm_input_poll();
+        bool pwm_valid = pwm_input_is_valid();
+        bool pwm_tout  = pwm_input_is_timed_out();
+
+        // Rising edge: first valid pulse (or recovery from timeout)
+        if (pwm_valid && !pwm_was_valid) {
+            printf("[pwm] signal acquired (%lu µs)\n",
+                   (unsigned long)pwm_input_get_us());
+        }
+
+        // Auto-home on first valid PWM (before any position tracking)
+        if (pwm_valid && !g_homed && !pwm_homing_triggered
+            && !stepgen_is_busy()) {
+            printf("[pwm] not homed — starting auto-home\n");
+            pwm_homing_triggered = true;
+            homing_run();
+        }
+
+        // Position tracking: move toward PWM target when homed & idle
+        if (pwm_valid && g_homed && !stepgen_is_busy()) {
+            float target_mm  = g_config.pwm_to_mm(pwm_input_get_us());
+            float current_mm = (float)stepgen_get_position()
+                               / g_config.steps_per_mm();
+            float error_mm   = target_mm - current_mm;
+
+            if (error_mm > g_config.deadband_mm
+                || error_mm < -g_config.deadband_mm) {
+                int32_t delta_steps = (int32_t)(error_mm
+                                               * g_config.steps_per_mm());
+                gpio_put(PIN_EN, g_config.en_active_low ? 0 : 1);
+                status_led_set(LedStatus::MOVING);
+                auto_disabled = false;
+                stepgen_move_accel(delta_steps,
+                                   g_config.default_speed_hz(),
+                                   g_config.accel_hz_per_s());
+            }
+        }
+
+        // PWM timeout: disable motor if configured
+        if (pwm_tout && pwm_was_valid && g_config.pwm_zero_disables) {
+            printf("[pwm] signal lost — disabling motor\n");
+            stepgen_stop();
+            gpio_put(PIN_EN, g_config.en_active_low ? 1 : 0);
+            status_led_set(LedStatus::IDLE);
+            auto_disabled = true;
+        }
+        pwm_was_valid = pwm_valid;
+
         // Auto-transition LED: MOVING → HOLDING when motion completes
         bool busy = stepgen_is_busy();
         if (was_busy && !busy) {
-            printf("[main] busy->idle  LED=%s\n", led_name(status_led_get()));
-            if (status_led_get() == LedStatus::MOVING) {
+            if (status_led_get() == LedStatus::MOVING)
                 status_led_set(LedStatus::HOLDING);
-                printf("[main] LED -> HOLDING\n");
-            }
-        }
-        if (!was_busy && busy) {
-            printf("[main] idle->busy  LED=%s\n", led_name(status_led_get()));
         }
         was_busy = busy;
 
@@ -131,7 +177,7 @@ int main() {
                 idle_since, get_absolute_time()) / 1000);
             if (idle_ms >= g_config.auto_disable_ms) {
                 gpio_put(PIN_EN, g_config.en_active_low ? 1 : 0);
-                status_led_set(LedStatus::OFF);
+                status_led_set(LedStatus::IDLE);
                 auto_disabled = true;
                 printf("[auto] motor disabled after %lu ms idle\n",
                        (unsigned long)g_config.auto_disable_ms);
@@ -140,6 +186,11 @@ int main() {
 
         // Update LED flash patterns
         status_led_update();
+
+        // Periodic NVM save (throttled — only when data changed)
+        if (!busy) {
+            nvm_save_if_needed(stepgen_get_position(), g_homed);
+        }
 
         // Tight loop hint (saves power on idle)
         tight_loop_contents();

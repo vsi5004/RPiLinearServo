@@ -273,6 +273,10 @@ void stepgen_reset_position() {
     s_position = 0;
 }
 
+void stepgen_set_position(int32_t pos) {
+    s_position = pos;
+}
+
 uint32_t stepgen_get_speed_hz() {
     return s_current_speed_hz;
 }

@@ -5,6 +5,8 @@
 #include "stepgen.h"
 #include "homing.h"
 #include "tmc2209.h"
+#include "pwm_input.h"
+#include "nvm_store.h"
 #include "config.h"
 #include "pins.h"
 #include "status_led.h"
@@ -94,6 +96,8 @@ static void cmd_help() {
     printf("  ramp <from> <to> <steps> Linear speed ramp\n");
     printf("  pos                      Print position\n");
     printf("  status                   Print full status\n");
+    printf("  pwm                      Print PWM input status\n");
+    printf("  nvm                      Print/save NVM state\n");
     printf("  help                     This message\n");
 }
 
@@ -318,6 +322,50 @@ static void cmd_diag() {
     }
 }
 
+static void cmd_pwm() {
+    uint32_t us  = pwm_input_get_us();
+    bool     val = pwm_input_is_valid();
+    bool     tout = pwm_input_is_timed_out();
+    float    mm  = g_config.pwm_to_mm(us);
+    printf("── PWM input ──\n");
+    printf("  pulse:   %lu µs\n", (unsigned long)us);
+    printf("  mapped:  %.3f mm  (stroke=%.1f mm)\n", mm, g_config.stroke_mm);
+    printf("  valid:   %s\n", val ? "yes" : "no");
+    printf("  timeout: %s\n", tout ? "YES" : "no");
+    printf("  homed:   %s\n", g_homed ? "yes" : "no");
+}
+static void cmd_nvm(char *args) {
+    char *tok = next_token(&args);
+    if (tok && strcmp(tok, "save") == 0) {
+        NvmData d;
+        d.homed          = g_homed;
+        d.position_steps = stepgen_get_position();
+        if (nvm_save(d))
+            printf("NVM saved\n");
+        else
+            printf("NVM save failed\n");
+        return;
+    }
+    if (tok && strcmp(tok, "clear") == 0) {
+        NvmData d;
+        d.homed          = false;
+        d.position_steps = 0;
+        nvm_save(d);
+        g_homed = false;
+        printf("NVM cleared — homed=false, pos=0\n");
+        return;
+    }
+    // Default: print current state
+    NvmData d;
+    bool valid = nvm_load(d);
+    printf("\u2500\u2500 NVM \u2500\u2500\n");
+    printf("  flash:   %s\n", valid ? "valid" : "empty/corrupt");
+    printf("  homed:   %d\n", d.homed);
+    printf("  pos:     %ld steps\n", (long)d.position_steps);
+    printf("  seq:     %lu\n", (unsigned long)d.sequence);
+    printf("  live:    homed=%d  pos=%ld\n",
+           g_homed, (long)stepgen_get_position());
+}
 static void cmd_wreg(char *args) {
     char *tok1 = next_token(&args);
     char *tok2 = next_token(&args);
@@ -364,6 +412,8 @@ static void cli_process_line(char *line) {
     else if (strcmp(cmd, "pos")     == 0) cmd_pos();
     else if (strcmp(cmd, "status")  == 0) cmd_status();
     else if (strcmp(cmd, "diag")    == 0) cmd_diag();
+    else if (strcmp(cmd, "pwm")     == 0) cmd_pwm();
+    else if (strcmp(cmd, "nvm")     == 0) cmd_nvm(line);
     else if (strcmp(cmd, "wreg")    == 0) cmd_wreg(line);
     else if (strcmp(cmd, "rreg")    == 0) cmd_rreg(line);
     else printf("unknown command: %s  (type 'help')\n", cmd);

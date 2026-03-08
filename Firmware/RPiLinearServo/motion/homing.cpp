@@ -9,10 +9,13 @@
 #include "config.h"
 #include "pins.h"
 #include "status_led.h"
+#include "nvm_store.h"
 
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
 #include <cstdio>
+
+bool g_homed = false;
 
 bool homing_run() {
     printf("[homing] hardstop homing (margin=%.0f%%)\n",
@@ -59,8 +62,13 @@ bool homing_run() {
 
     // ── 5. Set logical zero ────────────────────────────────────────────
     stepgen_reset_position();
+    g_homed = true;
     printf("[homing] homed OK — position reset to 0\n");
     status_led_set(LedStatus::HOMING_DONE);
-
+    // Persist homed state immediately
+    NvmData d;
+    d.homed          = true;
+    d.position_steps = 0;
+    nvm_save(d);
     return true;
 }

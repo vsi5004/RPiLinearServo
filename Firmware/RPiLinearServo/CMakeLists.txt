@@ -39,6 +39,7 @@ add_executable(RPiLinearServo
         drivers/tmc2209/tmc2209.cpp
         drivers/ws2812/ws2812.cpp
         drivers/ws2812/status_led.cpp
+        drivers/pwm_input/pwm_input.cpp
         motion/homing.cpp
         cli/cli.cpp
         storage/nvm_store.cpp
@@ -52,6 +53,8 @@ pico_generate_pio_header(RPiLinearServo
         ${CMAKE_CURRENT_LIST_DIR}/drivers/stepgen/stepgen.pio)
 pico_generate_pio_header(RPiLinearServo
         ${CMAKE_CURRENT_LIST_DIR}/drivers/ws2812/ws2812.pio)
+pico_generate_pio_header(RPiLinearServo
+        ${CMAKE_CURRENT_LIST_DIR}/drivers/pwm_input/pwm_capture.pio)
 
 # ── stdio over USB CDC (not UART) ──────────────────────────────────────
 pico_enable_stdio_uart(RPiLinearServo 0)
@@ -63,6 +66,7 @@ target_include_directories(RPiLinearServo PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/drivers/stepgen
         ${CMAKE_CURRENT_LIST_DIR}/drivers/tmc2209
         ${CMAKE_CURRENT_LIST_DIR}/drivers/ws2812
+        ${CMAKE_CURRENT_LIST_DIR}/drivers/pwm_input
         ${CMAKE_CURRENT_LIST_DIR}/motion
         ${CMAKE_CURRENT_LIST_DIR}/cli
         ${CMAKE_CURRENT_LIST_DIR}/storage
@@ -76,6 +80,8 @@ target_link_libraries(RPiLinearServo
         hardware_clocks
         hardware_timer
         hardware_uart
+        hardware_flash
+        hardware_sync
 )
 
 # ── Extra outputs (.uf2, .bin, .hex, .map, .dis) ──────────────────────
