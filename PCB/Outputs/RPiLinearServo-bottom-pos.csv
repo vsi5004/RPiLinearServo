@@ -1,0 +1,5 @@
+Ref,Val,Package,PosX,PosY,Rot,Side
+"C4","2.2uF","C_0805_2012Metric_Pad1.18x1.45mm_HandSolder",136.000000,-97.000000,180.000000,bottom
+"C5","2.2uF","C_0805_2012Metric_Pad1.18x1.45mm_HandSolder",136.000000,-103.000000,180.000000,bottom
+"R2","1K","R_0603_1608Metric_Pad0.98x0.95mm_HandSolder",138.750000,-103.500000,90.000000,bottom
+"U3","DRV5055A3xDBZxQ1","SOT-23_Handsoldering",136.750000,-100.000000,180.000000,bottom

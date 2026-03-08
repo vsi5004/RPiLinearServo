@@ -1,0 +1,81 @@
+; ── stepgen.pio ──────────────────────────────────────────────────────────
+; PIO step-pulse generator for STEP/DIR stepper drivers (TMC2209).
+;
+; Generates a symmetric square wave on the SET pin.  Each full cycle
+; (high + low) = 4 PIO clock cycles.  An IRQ is fired on every rising
+; edge so the CPU can maintain an exact step counter.
+;
+; Speed control:  change the SM clock divider at runtime.
+;   step_freq = pio_clk / 4  =  clk_sys / (clkdiv * 4)
+;
+; Stopping:  disable the SM.  The pin is forced low by the init helper.
+;
+; Minimum STEP high time: 2 PIO cycles.
+;   At clkdiv = 8    →  PIO clk = 15.6 MHz  →  high = 128 ns  (meets TMC2209 spec ≥ 100 ns)
+;   At clkdiv = 125  →  PIO clk = 1 MHz     →  high = 2 µs    (legacy conservative setting)
+
+.program stepgen
+
+.wrap_target
+    set pins, 1         ; STEP high  (cycle 0)
+    irq nowait 0        ; fire IRQ0  (cycle 1)   — non-blocking flag set
+    set pins, 0         ; STEP low   (cycle 2)
+    nop                 ; pad        (cycle 3)   — keeps 50 % duty cycle
+.wrap
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+// Minimum clock divider to guarantee STEP high time >= 100 ns (TMC2209 spec).
+// high_time = 2 * (clkdiv / clk_sys)  >=  100 ns
+// clkdiv >= clk_sys * 100e-9 / 2 = clk_sys / 20_000_000
+// At 125 MHz: min_clkdiv = 6.25  →  round up to 8.0 for margin (gives 128 ns).
+#define STEPGEN_MIN_CLKDIV 8.0f
+
+static inline void stepgen_program_init(PIO pio, uint sm, uint offset, uint step_pin) {
+    pio_sm_config c = stepgen_program_get_default_config(offset);
+
+    // STEP pin as SET pin (directly toggled by the PIO program)
+    sm_config_set_set_pins(&c, step_pin, 1);
+    pio_gpio_init(pio, step_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, step_pin, 1, true);  // output
+
+    // Start with a safe clock divider (slow speed)
+    sm_config_set_clkdiv(&c, STEPGEN_MIN_CLKDIV);
+
+    // Load config, do NOT enable yet (caller controls start/stop)
+    pio_sm_init(pio, sm, offset, &c);
+
+    // Ensure STEP starts low
+    pio_sm_exec(pio, sm, pio_encode_set(pio_pins, 0));
+}
+
+// Set step frequency by adjusting the SM clock divider.
+// step_freq = clk_sys / (clkdiv * 4)   →   clkdiv = clk_sys / (step_freq * 4)
+// Returns the actual frequency achieved.
+static inline uint32_t stepgen_set_frequency(PIO pio, uint sm, uint32_t freq_hz) {
+    if (freq_hz == 0) return 0;
+
+    float sys_clk = (float)clock_get_hz(clk_sys);
+    float divider = sys_clk / ((float)freq_hz * 4.0f);
+
+    // Clamp divider to valid range
+    if (divider < STEPGEN_MIN_CLKDIV) divider = STEPGEN_MIN_CLKDIV;
+    if (divider > 65536.0f) divider = 65536.0f;
+
+    pio_sm_set_clkdiv(pio, sm, divider);
+
+    // Return actual frequency
+    return (uint32_t)(sys_clk / (divider * 4.0f));
+}
+
+static inline void stepgen_pio_start(PIO pio, uint sm) {
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+static inline void stepgen_pio_stop(PIO pio, uint sm) {
+    pio_sm_set_enabled(pio, sm, false);
+    // Force STEP low
+    pio_sm_exec(pio, sm, pio_encode_set(pio_pins, 0));
+}
+%}

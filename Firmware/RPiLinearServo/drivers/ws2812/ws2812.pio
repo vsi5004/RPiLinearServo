@@ -1,0 +1,46 @@
+; ── ws2812.pio ────────────────────────────────────────────────────────────
+; WS2812 / NeoPixel driver — 800 kHz serial protocol.
+; Uses side-set on 1 pin for data output.
+;
+; Bit timing (at 800 kHz, T = 1.25 µs per bit):
+;   T1 (high for '1') = 0.8 µs   → 6 cycles  @ 10 cycles/bit
+;   T2 (low  for '1') = 0.45 µs  → 4 cycles
+;   T3 (high for '0') = 0.4 µs   → 3 cycles
+;   T4 (low  for '0') = 0.85 µs  → 7 cycles
+;
+; Each bit takes 10 PIO cycles.  Clock divider formula:
+;   clkdiv = sys_clk / (800000 * 10)
+
+.program ws2812
+.side_set 1
+
+.wrap_target
+bitloop:
+    out x, 1       side 0 [2]  ; shift 1 bit from OSR into X; drive low for 3 cycles
+    jmp !x do_zero side 1 [1]  ; if bit == 0, branch; drive high for 2 cycles
+do_one:
+    jmp  bitloop   side 1 [4]  ; bit == 1: stay high 5 more (total 7 high), then loop
+do_zero:
+    nop            side 0 [4]  ; bit == 0: stay low  5 more (total 8 low),  then loop
+.wrap
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void ws2812_program_init(PIO pio, uint sm, uint offset,
+                                       uint pin, float freq) {
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+
+    pio_sm_config c = ws2812_program_get_default_config(offset);
+    sm_config_set_sideset_pins(&c, pin);
+    sm_config_set_out_shift(&c, false, true, 24);   // shift left, autopull at 24 bits
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);  // join FIFOs for deeper TX
+
+    float div = clock_get_hz(clk_sys) / (freq * 10.0f);
+    sm_config_set_clkdiv(&c, div);
+
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

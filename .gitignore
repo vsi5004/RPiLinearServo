@@ -1,0 +1,32 @@
+# Build outputs
+build/
+**/build/
+
+# UF2 files outside of build directories
+*.uf2
+
+# IDE / editor
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Compiled
+*.o
+*.d
+*.elf
+*.bin
+*.hex
+*.map
+*.dis
+PCB/RPiLinearServo-backups
+
+# Copilot temp files
+tmpclaude-*
