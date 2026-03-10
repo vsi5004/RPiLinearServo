@@ -74,8 +74,8 @@ bool nvm_load(NvmData &out) {
     const NvmData *best = nullptr;
 
     if (a_ok && b_ok) {
-        // Both valid — pick highest sequence
-        best = (b.sequence > a.sequence) ? &b : &a;
+        // Both valid — pick highest sequence (wrapping-safe comparison)
+        best = ((int32_t)(b.sequence - a.sequence) > 0) ? &b : &a;
         s_next_is_b = (best == &a);  // write to the other slot
     } else if (a_ok) {
         best = &a;

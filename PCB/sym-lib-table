@@ -4,4 +4,5 @@
   (lib (name "TMC2209_SILENTSTEPSTICK")(type "KiCad")(uri "${KIPRJMOD}/Components/TMC2209_SILENTSTEPSTICK.kicad_sym")(options "")(descr ""))
   (lib (name "EEEFP1C471AP")(type "KiCad")(uri "${KIPRJMOD}/Components/EEEFP1C471AP.kicad_sym")(options "")(descr ""))
   (lib (name "EEEFPC101XAP")(type "KiCad")(uri "${KIPRJMOD}/Components/EEEFPC101XAP.kicad_sym")(options "")(descr ""))
+  (lib (name "TPD1E10B06DPYR")(type "KiCad")(uri "${KIPRJMOD}/Components/TPD1E10B06DPYR.kicad_sym")(options "")(descr ""))
 )

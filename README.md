@@ -164,38 +164,6 @@ EN: enabled
 driver disabled
 ```
 
-## Project Structure
-
-```
-Firmware/RPiLinearServo/
-  CMakeLists.txt
-  pico_sdk_import.cmake
-  src/
-    main.cpp                Entry point, state machine, main loop
-  include/
-    config.h                ServoConfig struct (compile-time defaults)
-    pins.h                  GPIO pin definitions
-  drivers/stepgen/
-    stepgen.pio             PIO step-pulse program
-    stepgen.h / .cpp        PIO driver: speed control, IRQ counting, accel ramp
-  drivers/tmc2209/
-    tmc2209_uart.pio        PIO half-duplex UART (TX + RX programs)
-    tmc2209.h / .cpp        TMC2209 register access, startup configuration
-  drivers/ws2812/
-    ws2812.pio              PIO WS2812 driver program
-    ws2812.h / .cpp         Low-level WS2812 pixel output
-    status_led.h / .cpp     LED state machine (breathing, flash, heartbeat)
-  drivers/pwm_input/
-    pwm_capture.pio         PIO PWM pulse-width capture program
-    pwm_input.h / .cpp      PWM input driver (PIO1/SM1, µs conversion, validation)
-  motion/
-    homing.h / .cpp         Hardstop homing sequence
-  cli/
-    cli.h / .cpp            USB CDC command interface
-  storage/
-    nvm_store.h / .cpp      Flash-backed dual-slot NVM (CRC32, sequence counter)
-```
-
 ## License
 
 TBD
