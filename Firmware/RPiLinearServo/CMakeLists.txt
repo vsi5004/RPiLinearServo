@@ -1,5 +1,5 @@
-# RPiLinearServo — Stage 1 firmware
-# PIO-driven stepper exercise + CLI + StallGuard/time-based homing
+# RPiLinearServo — Stage 2 firmware
+# Composite USB (CDC + MSC config drive), PWM servo, hardstop homing
 # Driver: TMC2209 SilentStepStick via STEP/DIR + hardware UART1 (GP4/GP5)
 
 cmake_minimum_required(VERSION 3.13)
@@ -43,6 +43,11 @@ add_executable(RPiLinearServo
         motion/homing.cpp
         cli/cli.cpp
         storage/nvm_store.cpp
+        usb/usb_descriptors.cpp
+        usb/usb_stdio.cpp
+        usb/msc_disk.cpp
+        config/config_ini.cpp
+        config/config_store.cpp
 )
 
 pico_set_program_name(RPiLinearServo "RPiLinearServo")
@@ -56,9 +61,9 @@ pico_generate_pio_header(RPiLinearServo
 pico_generate_pio_header(RPiLinearServo
         ${CMAKE_CURRENT_LIST_DIR}/drivers/pwm_input/pwm_capture.pio)
 
-# ── stdio over USB CDC (not UART) ──────────────────────────────────────
+# ── stdio over USB CDC (handled by our composite TinyUSB layer) ─────────
 pico_enable_stdio_uart(RPiLinearServo 0)
-pico_enable_stdio_usb(RPiLinearServo 1)
+pico_enable_stdio_usb(RPiLinearServo 0)
 
 # ── Include paths ──────────────────────────────────────────────────────
 target_include_directories(RPiLinearServo PRIVATE
@@ -70,11 +75,16 @@ target_include_directories(RPiLinearServo PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/motion
         ${CMAKE_CURRENT_LIST_DIR}/cli
         ${CMAKE_CURRENT_LIST_DIR}/storage
+        ${CMAKE_CURRENT_LIST_DIR}/usb
+        ${CMAKE_CURRENT_LIST_DIR}/config
 )
 
 # ── Libraries ──────────────────────────────────────────────────────────
 target_link_libraries(RPiLinearServo
         pico_stdlib
+        pico_unique_id
+        tinyusb_device
+        tinyusb_board
         hardware_pio
         hardware_gpio
         hardware_clocks

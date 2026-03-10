@@ -1,6 +1,6 @@
 // ── main.cpp ────────────────────────────────────────────────────────────
-// RPiLinearServo — Stage 1+ firmware entry point.
-// PIO-driven stepper exercise + CLI + hardstop homing + PWM input.
+// RPiLinearServo — Stage 2 firmware entry point.
+// Composite USB (CDC + MSC config drive), PWM servo, hardstop homing.
 // Driver: TMC2209 SilentStepStick via STEP/DIR + single-wire UART.
 
 #include "pins.h"
@@ -12,6 +12,9 @@
 #include "tmc2209.h"
 #include "pwm_input.h"
 #include "status_led.h"
+#include "usb_stdio.h"
+#include "msc_disk.h"
+#include "config_store.h"
 
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
@@ -45,13 +48,13 @@ static void print_banner() {
 
 // ── Main ───────────────────────────────────────────────────────────────
 int main() {
-    // ── 1.  Init stdio (USB CDC) ───────────────────────────────────────
-    stdio_init_all();
+    // ── 1.  Init stdio (USB CDC + MSC composite) ────────────────────────
+    usb_stdio_init();
 
     // Wait up to 2 s for a USB host to connect so the banner is visible.
     // If nobody connects, we proceed anyway.
     for (int i = 0; i < 20; i++) {
-        if (stdio_usb_connected()) break;
+        if (usb_stdio_connected()) break;
         sleep_ms(100);
     }
 
@@ -65,6 +68,9 @@ int main() {
     status_led_init(PIN_LED);
 
     // ── 3.  Init subsystems ────────────────────────────────────────────
+    // Load user config from flash (before TMC2209 so currents are applied)
+    config_load(g_config);
+
     // Initialise TMC2209 UART and push startup configuration (current,
     // microstepping, StealthChop) before enabling steps.
     tmc2209_init(PIN_UART_TX, PIN_UART_RX);
@@ -86,6 +92,9 @@ int main() {
         }
     }
 
+    // Init USB mass storage config drive
+    msc_disk_init();
+
     // ── 4.  Banner & CLI ───────────────────────────────────────────────
     print_banner();
     cli_init();
@@ -101,6 +110,12 @@ int main() {
     while (true) {
         // Poll the CLI
         cli_poll();
+
+        // Poll USB MSC — apply config if host wrote CONFIG.INI
+        if (msc_disk_poll()) {
+            // Config changed via USB — re-apply driver settings
+            tmc2209_configure(g_config);
+        }
 
         // ── PWM input ──────────────────────────────────────────────
         pwm_input_poll();

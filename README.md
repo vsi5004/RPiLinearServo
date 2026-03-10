@@ -4,7 +4,7 @@ Closed-loop linear servo firmware for the RP2040, using a stepper-driven linear 
 
 See [Docs/SPEC.md](Docs/SPEC.md) for the full specification.
 
-## Current Stage — Stage 1+
+## Current Stage — Stage 2
 
 - PIO-based step pulse generation with IRQ-counted position tracking (exact, no drift)
 - Trapezoidal acceleration / deceleration via 1 kHz timer updating PIO clock divider
@@ -18,6 +18,8 @@ See [Docs/SPEC.md](Docs/SPEC.md) for the full specification.
 - NVM persistence: homed flag and position survive power cycles (dual-slot flash with CRC32)
 - LED status: idle heartbeat (amber), holding (green), moving (blue), homing (breathing blue), error (red)
 - Dark mode option to disable LED entirely
+- **USB Config Drive**: composite CDC+MSC device exposes a virtual FAT12 drive with editable CONFIG.INI
+- **Flash-backed config persistence**: user settings survive power cycles (separate 4 KB sector with CRC32)
 
 ## Hardware
 
@@ -111,9 +113,46 @@ This produces `RPiLinearServo.uf2`.
 
 1. Hold BOOTSEL on the RP2040-Zero and plug in USB.
 2. Drag `RPiLinearServo.uf2` onto the `RPI-RP2` drive.
-3. The board reboots and enumerates as a USB CDC serial device.
+3. The board reboots and enumerates as a composite USB device (CDC serial + MSC config drive).
 
 Alternatively, flash via SWD with the **Flash** task in VS Code.
+
+## USB Config Drive
+
+The device appears as a small USB mass storage drive named **LINEARSERVO** alongside the serial port. The drive contains two files:
+
+| File | Access | Description |
+|---|---|---|
+| `CONFIG.INI` | Read / Write | User-editable servo parameters |
+| `STATUS.TXT` | Read-only | Firmware version and last config apply result |
+
+### Editable fields in CONFIG.INI
+
+```ini
+[stroke]
+stroke_mm = 8.40
+
+[driver]
+dir_invert = false
+run_current_ma = 100
+hold_current_ma = 50
+
+[motion]
+default_speed_mm_s = 40.0
+max_accel_mm_s2 = 80.0
+auto_disable_ms = 2000
+
+[rc_pwm]
+min_us = 1000
+max_us = 2000
+
+[led]
+dark_mode = false
+```
+
+Edit the file with any text editor, save, and **safely eject** the drive. The firmware detects the write, parses the INI, validates ranges, saves to flash, and re-applies driver settings — all within ~500 ms. The result appears in `STATUS.TXT`.
+
+Config is stored in a dedicated 4 KB flash sector (0x1F2000) with magic, version, and CRC32 validation. It persists across power cycles independently of the NVM homing data.
 
 ## USB CLI
 
