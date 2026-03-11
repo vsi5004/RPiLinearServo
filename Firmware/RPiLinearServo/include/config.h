@@ -2,9 +2,20 @@
 
 #include <cstdint>
 
-constexpr int FW_VERSION_MAJOR = 0;
-constexpr int FW_VERSION_MINOR = 1;
-constexpr int FW_VERSION_PATCH = 0;
+// Version injected by CMake from the latest git tag (e.g. v1.0.0).
+// Fallback values used only when building outside CMake.
+#ifndef FW_VERSION_MAJOR
+#define FW_VERSION_MAJOR 1
+#endif
+#ifndef FW_VERSION_MINOR
+#define FW_VERSION_MINOR 0
+#endif
+#ifndef FW_VERSION_PATCH
+#define FW_VERSION_PATCH 0
+#endif
+#ifndef FW_GIT_HASH
+#define FW_GIT_HASH "unknown"
+#endif
 
 // Compile-time defaults.  Overridden at boot by flash-backed CONFIG.INI.
 
@@ -56,6 +67,8 @@ struct ServoConfig {
     }
 
     bool     led_dark_mode      = false;   // true = LED stays off at all times
+
+    bool     sleep_when_idle     = false;   // true = enter dormant mode when PWM lost and USB not mounted
 
     bool     use_hall_effect     = false;   // true = use magnetic encoder feedback
 

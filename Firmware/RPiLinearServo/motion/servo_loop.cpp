@@ -3,6 +3,7 @@
 
 #include "servo_loop.h"
 #include "hall_verify.h"
+#include "dormant.h"
 #include "config.h"
 #include "pins.h"
 #include "stepgen.h"
@@ -22,10 +23,12 @@ static LedStatus       s_prev_led            = LedStatus::OFF;
 static bool            s_pwm_was_valid       = false;
 static bool            s_pwm_homing_triggered = false;
 static absolute_time_t s_next_hall_sample;
+static absolute_time_t s_boot_time;
 
 void servo_loop_init() {
     s_idle_since       = get_absolute_time();
     s_next_hall_sample = get_absolute_time();
+    s_boot_time        = get_absolute_time();
 }
 
 
@@ -75,6 +78,21 @@ static void poll_pwm_input() {
         gpio_put(PIN_EN, EN_DISABLE);
         status_led_set(LedStatus::IDLE);
         s_auto_disabled = true;
+    }
+
+    // Attempt dormant sleep when there is no PWM activity:
+    //  - after signal-lost timeout (pwm_tout && s_pwm_was_valid handled above)
+    //  - or if no valid pulse was ever received (pin held low from boot)
+    //    with a 5 s grace period so USB has time to enumerate first
+    bool no_pwm_ever = !pwm_input_ever_valid()
+                       && absolute_time_diff_us(s_boot_time, get_absolute_time())
+                          > 5000000;
+    if ((pwm_tout && s_auto_disabled) || no_pwm_ever) {
+        if (dormant_try_enter()) {
+            s_pwm_was_valid        = false;
+            s_pwm_homing_triggered = false;
+            return;
+        }
     }
     s_pwm_was_valid = pwm_valid;
 }

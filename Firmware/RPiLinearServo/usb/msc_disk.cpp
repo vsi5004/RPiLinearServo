@@ -174,6 +174,9 @@ static void generate_config_ini(void) {
         "[led]\r\n"
         "dark_mode = %s\r\n"
         "\r\n"
+        "[power]\r\n"
+        "sleep_when_idle = %s\r\n"
+        "\r\n"
         "[sensor]\r\n"
         "use_hall_effect = %s\r\n",
         (double)g_config.stroke_mm,
@@ -187,6 +190,7 @@ static void generate_config_ini(void) {
         (unsigned long)g_config.pwm_min_us,
         (unsigned long)g_config.pwm_max_us,
         g_config.led_dark_mode ? "true" : "false",
+        g_config.sleep_when_idle ? "true" : "false",
         g_config.use_hall_effect ? "true" : "false"
     );
     s_cfg_len = (n > 0 && n < (int)sizeof(s_cfg_buf)) ? (uint32_t)n : 0;

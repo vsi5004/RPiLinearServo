@@ -123,6 +123,14 @@ static void pio_irq_handler() {
 
 
 void stepgen_init(uint step_pin, uint dir_pin) {
+    // Tear down resources that cannot be registered twice (dormant wake re-init).
+    if (s_initialised) {
+        cancel_repeating_timer(&s_ramp_timer);
+        uint pio_irq_num = (s_pio == pio0) ? PIO0_IRQ_0 : PIO1_IRQ_0;
+        irq_set_enabled(pio_irq_num, false);
+        irq_remove_handler(pio_irq_num, pio_irq_handler);
+    }
+
     s_step_pin = step_pin;
     s_dir_pin  = dir_pin;
 

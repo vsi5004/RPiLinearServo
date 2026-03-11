@@ -23,3 +23,6 @@ bool pwm_input_is_valid();
 
 /// @return true if no valid pulse has been received for longer than timeout_ms.
 bool pwm_input_is_timed_out();
+
+/// @return true if at least one valid pulse has been received since init.
+bool pwm_input_ever_valid();

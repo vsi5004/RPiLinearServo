@@ -11,7 +11,7 @@
 
 // On-disk struct
 static constexpr uint32_t CFG_MAGIC   = 0x4C534347;  // "LSCG"
-static constexpr uint32_t CFG_VERSION = 4;
+static constexpr uint32_t CFG_VERSION = 5;
 
 struct __attribute__((packed)) ConfigFlash {
     uint32_t magic;
@@ -29,6 +29,7 @@ struct __attribute__((packed)) ConfigFlash {
     uint32_t pwm_min_us;
     uint32_t pwm_max_us;
     uint8_t  led_dark_mode;     // bool stored as uint8
+    uint8_t  sleep_when_idle;   // bool stored as uint8
     uint8_t  use_hall_effect;   // bool stored as uint8
     float    lost_step_threshold_mv;
 
@@ -61,6 +62,7 @@ bool config_load(ServoConfig &cfg) {
     cfg.pwm_min_us        = f.pwm_min_us;
     cfg.pwm_max_us        = f.pwm_max_us;
     cfg.led_dark_mode     = f.led_dark_mode != 0;
+    cfg.sleep_when_idle   = f.sleep_when_idle != 0;
     cfg.use_hall_effect   = f.use_hall_effect != 0;
     cfg.lost_step_threshold_mv = f.lost_step_threshold_mv;
 
@@ -86,6 +88,7 @@ bool config_save(const ServoConfig &cfg) {
     f.pwm_min_us        = cfg.pwm_min_us;
     f.pwm_max_us        = cfg.pwm_max_us;
     f.led_dark_mode     = cfg.led_dark_mode ? 1 : 0;
+    f.sleep_when_idle   = cfg.sleep_when_idle ? 1 : 0;
     f.use_hall_effect   = cfg.use_hall_effect ? 1 : 0;
     f.lost_step_threshold_mv = cfg.lost_step_threshold_mv;
 

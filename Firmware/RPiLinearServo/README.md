@@ -112,6 +112,19 @@ Reads the DRV5055 analog output on ADC0 (GP26) with 64× oversampling across 5 a
 - Post-move position verification via 128-entry calibration LUT
 - Lost-step correction (single attempt, then fault if still out of tolerance)
 
+### Dormant Sleep (`power/dormant.cpp`)
+
+When `sleep_when_idle` is enabled and the PWM signal is lost, the RP2040 enters XOSC dormant mode — halting the crystal oscillator and both PLLs for minimal power draw. The device wakes instantly on the next PWM rising edge (GP0).
+
+Entry conditions (all must be true):
+- `sleep_when_idle = true` in config
+- PWM signal timed out and motor auto-disabled **or** no valid pulse received within 5 seconds of boot
+- USB host not mounted (prevents sleeping while CLI / config drive is in use)
+
+Pre-sleep sequence: force an unconditional position save to flash, stash position in RAM, disable motor and LED, disable all PIO state machines, clear PIO instruction memory, switch clocks to XOSC, shut down both PLLs.
+
+Post-wake sequence: restore PLLs and system clock, re-initialise all peripherals (USB, TMC2209, PIO drivers, hall sensor), restore position from RAM (avoids stale-flash mismatches), re-init the servo loop.
+
 ### Servo Loop (`motion/`)
 
 The top-level motion coordinator, polled from the main loop:
@@ -188,4 +201,5 @@ The `ServoConfig` struct (`include/config.h`) contains all runtime parameters. D
 | | `pwm_max_us` | 2000 | Maximum valid pulse width (µs) |
 | | `pwm_timeout_ms` | 100 | Signal-lost timeout (ms) |
 | LED | `dark_mode` | false | Disable status LED |
+| Power | `sleep_when_idle` | false | Enter dormant mode when PWM signal is lost (wake on next pulse) |
 | Sensor | `use_hall_effect` | false | Enable hall sensor feedback |

@@ -23,8 +23,8 @@
 static void print_banner() {
     printf("\n");
     printf("════════════════════════════════════════════\n");
-    printf("  RPiLinearServo  v%d.%d.%d\n",
-           FW_VERSION_MAJOR, FW_VERSION_MINOR, FW_VERSION_PATCH);
+    printf("  RPiLinearServo  v%d.%d.%d (%s)\n",
+           FW_VERSION_MAJOR, FW_VERSION_MINOR, FW_VERSION_PATCH, FW_GIT_HASH);
     printf("════════════════════════════════════════════\n");
     printf("  sys_clk  : %lu MHz\n",
            (unsigned long)(clock_get_hz(clk_sys) / 1000000));

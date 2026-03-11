@@ -73,7 +73,7 @@ static bool parse_uint32(const char *val, size_t len, uint32_t &out) {
 }
 
 
-enum class Section { NONE, STROKE, DRIVER, MOTION, RC_PWM, LED, SENSOR };
+enum class Section { NONE, STROKE, DRIVER, MOTION, RC_PWM, LED, POWER, SENSOR };
 
 static bool apply_key(Section sec, const char *key, size_t klen,
                       const char *val, size_t vlen, ServoConfig &cfg,
@@ -140,6 +140,12 @@ static bool apply_key(Section sec, const char *key, size_t klen,
         }
         break;
 
+    case Section::POWER:
+        if (match(key, klen, "sleep_when_idle")) {
+            ok = parse_bool(val, vlen, cfg.sleep_when_idle);
+        }
+        break;
+
     case Section::SENSOR:
         if (match(key, klen, "use_hall_effect")) {
             ok = parse_bool(val, vlen, cfg.use_hall_effect);
@@ -197,6 +203,7 @@ bool config_ini_parse(const char *ini_text, size_t len,
                 else if (match(sname, slen, "motion"))   section = Section::MOTION;
                 else if (match(sname, slen, "rc_pwm"))   section = Section::RC_PWM;
                 else if (match(sname, slen, "led"))      section = Section::LED;
+                else if (match(sname, slen, "power"))    section = Section::POWER;
                 else if (match(sname, slen, "sensor"))   section = Section::SENSOR;
                 else section = Section::NONE;
             }

@@ -74,3 +74,7 @@ bool pwm_input_is_timed_out() {
     uint64_t elapsed = absolute_time_diff_us(s_last_valid_at, get_absolute_time());
     return elapsed > (uint64_t)g_config.pwm_timeout_ms * 1000;
 }
+
+bool pwm_input_ever_valid() {
+    return s_ever_valid;
+}

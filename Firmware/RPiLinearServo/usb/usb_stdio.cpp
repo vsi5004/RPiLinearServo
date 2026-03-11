@@ -17,6 +17,8 @@ static constexpr uint32_t STDIO_USB_DEADLOCK_TIMEOUT_MS  = 1000;
 
 static mutex_t s_mutex;
 static uint8_t s_low_priority_irq;
+static bool    s_usb_stdio_initialised = false;
+static alarm_id_t s_task_alarm_id;
 
 
 static int64_t timer_task(alarm_id_t, void *) {
@@ -100,6 +102,14 @@ static stdio_driver_t stdio_usb_driver = {
 
 // Public API
 void usb_stdio_init(void) {
+    // Tear down resources that cannot be registered twice (dormant wake re-init).
+    if (s_usb_stdio_initialised) {
+        cancel_alarm(s_task_alarm_id);
+        irq_set_enabled(s_low_priority_irq, false);
+        irq_remove_handler(s_low_priority_irq, low_priority_worker);
+        user_irq_unclaim(s_low_priority_irq);
+    }
+
     tusb_init();
     mutex_init(&s_mutex);
 
@@ -107,9 +117,10 @@ void usb_stdio_init(void) {
     irq_set_exclusive_handler(s_low_priority_irq, low_priority_worker);
     irq_set_enabled(s_low_priority_irq, true);
 
-    add_alarm_in_us(STDIO_USB_TASK_INTERVAL_US, timer_task, nullptr, true);
+    s_task_alarm_id = add_alarm_in_us(STDIO_USB_TASK_INTERVAL_US, timer_task, nullptr, true);
 
     stdio_set_driver_enabled(&stdio_usb_driver, true);
+    s_usb_stdio_initialised = true;
 }
 
 bool usb_stdio_connected(void) {

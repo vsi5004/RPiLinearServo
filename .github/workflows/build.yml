@@ -1,10 +1,16 @@
-name: Build Firmware
+name: Build and Release Firmware
 
 on:
   push:
     branches: [ main ]
+    tags:
+      - 'v*'
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -16,6 +22,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history for git describe
 
       - name: Install ARM GCC toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
@@ -28,25 +36,114 @@ jobs:
             https://github.com/raspberrypi/pico-sdk.git /tmp/pico-sdk
           cd /tmp/pico-sdk && git submodule update --init
 
+      - name: Get version info
+        id: version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
+          fi
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+
+          # Parse semver from tag (or default to 0.0.0 for dev builds)
+          if [[ $VERSION =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+            VER_MAJOR=${BASH_REMATCH[1]}
+            VER_MINOR=${BASH_REMATCH[2]}
+            VER_PATCH=${BASH_REMATCH[3]}
+          else
+            VER_MAJOR=0; VER_MINOR=0; VER_PATCH=0
+          fi
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT_HASH" >> $GITHUB_OUTPUT
+          echo "major=$VER_MAJOR" >> $GITHUB_OUTPUT
+          echo "minor=$VER_MINOR" >> $GITHUB_OUTPUT
+          echo "patch=$VER_PATCH" >> $GITHUB_OUTPUT
+
       - name: Configure CMake
         run: |
           cmake -B Firmware/RPiLinearServo/build \
                 -S Firmware/RPiLinearServo \
-                -DPICO_SDK_PATH=/tmp/pico-sdk
+                -DPICO_SDK_PATH=/tmp/pico-sdk \
+                -DFW_VERSION_MAJOR=${{ steps.version.outputs.major }} \
+                -DFW_VERSION_MINOR=${{ steps.version.outputs.minor }} \
+                -DFW_VERSION_PATCH=${{ steps.version.outputs.patch }} \
+                -DFW_GIT_HASH=${{ steps.version.outputs.commit }}
         env:
           PICO_SDK_PATH: /tmp/pico-sdk
 
       - name: Build
         run: cmake --build Firmware/RPiLinearServo/build --parallel
 
-      - name: Upload UF2 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: RPiLinearServo-uf2
-          path: Firmware/RPiLinearServo/build/RPiLinearServo.uf2
+      # --- CI artifacts (all builds) ---
 
-      - name: Upload ELF artifact
+      - name: Upload UF2 artifact
+        if: "!startsWith(github.ref, 'refs/tags/')"
         uses: actions/upload-artifact@v4
         with:
-          name: RPiLinearServo-elf
-          path: Firmware/RPiLinearServo/build/RPiLinearServo.elf
+          name: RPiLinearServo-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}
+          path: |
+            Firmware/RPiLinearServo/build/RPiLinearServo.uf2
+            Firmware/RPiLinearServo/build/RPiLinearServo.elf
+
+      # --- Release (tag builds only) ---
+
+      - name: Prepare release files
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          mkdir -p release
+          cp Firmware/RPiLinearServo/build/RPiLinearServo.uf2 \
+             release/RPiLinearServo-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}.uf2
+
+          cd release
+          sha256sum * > SHA256SUMS.txt
+
+          cat > FLASH_INSTRUCTIONS.txt << EOF
+          RPiLinearServo - Flash Instructions
+          ====================================
+
+          Version: ${{ steps.version.outputs.version }}
+          Commit:  ${{ steps.version.outputs.commit }}
+
+          1. Hold BOOTSEL on the RP2040-Zero and plug in USB.
+          2. Drag the .uf2 file onto the RPI-RP2 drive.
+          3. The board reboots and enumerates as a composite USB device
+             (CDC serial + MSC config drive).
+
+          Alternatively, use picotool:
+            picotool load RPiLinearServo-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}.uf2
+          EOF
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release/*
+          generate_release_notes: true
+          body: |
+            ## RPiLinearServo ${{ steps.version.outputs.version }}
+
+            **Commit:** `${{ steps.version.outputs.commit }}`
+
+            ### Downloads
+
+            **Quick Start:** Download `RPiLinearServo-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}.uf2` and drag it onto the **RPI-RP2** drive (hold BOOTSEL while plugging in USB).
+
+            ### Files Included
+
+            - `RPiLinearServo-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}.uf2` — Firmware image (drag to RPI-RP2 drive)
+            - `FLASH_INSTRUCTIONS.txt` — Quick flash guide
+            - `SHA256SUMS.txt` — File checksums for verification
+
+            ### After Flashing
+
+            The device enumerates as a composite USB device:
+            - **CDC serial port** — Interactive CLI (`help` for commands)
+            - **MSC drive (LINEARSERVO)** — Edit `CONFIG.INI` to configure, then safely eject
+
+            See the [README](https://github.com/vsi5004/RPiLinearServo#getting-started) for full setup instructions.
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

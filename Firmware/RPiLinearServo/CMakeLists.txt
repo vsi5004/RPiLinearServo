@@ -28,6 +28,43 @@ project(RPiLinearServo C CXX ASM)
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
+# ---------------------------------------------------------------------------
+# Version from git tag  (fallback: 1.0.0 / "unknown")
+# CI can override via -DFW_VERSION_MAJOR=... -DFW_GIT_HASH=...
+# ---------------------------------------------------------------------------
+if(NOT DEFINED FW_VERSION_MAJOR)
+    set(FW_VERSION_MAJOR 1)
+    set(FW_VERSION_MINOR 0)
+    set(FW_VERSION_PATCH 0)
+    set(FW_GIT_HASH "unknown")
+
+    find_package(Git QUIET)
+    if(GIT_FOUND)
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} describe --tags --match "v*" --abbrev=0
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            OUTPUT_VARIABLE GIT_TAG
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE GIT_TAG_RESULT
+        )
+        if(GIT_TAG_RESULT EQUAL 0 AND GIT_TAG MATCHES "^v([0-9]+)\\.([0-9]+)\\.([0-9]+)")
+            set(FW_VERSION_MAJOR ${CMAKE_MATCH_1})
+            set(FW_VERSION_MINOR ${CMAKE_MATCH_2})
+            set(FW_VERSION_PATCH ${CMAKE_MATCH_3})
+        endif()
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            OUTPUT_VARIABLE FW_GIT_HASH
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+    endif()
+endif()
+
+message(STATUS "Firmware version: ${FW_VERSION_MAJOR}.${FW_VERSION_MINOR}.${FW_VERSION_PATCH} (${FW_GIT_HASH})")
+
 # Executable
 add_executable(RPiLinearServo
         src/main.cpp
@@ -47,10 +84,18 @@ add_executable(RPiLinearServo
         storage/config_ini.cpp
         storage/config_store.cpp
         drivers/hall_sensor/hall_sensor.cpp
+        power/dormant.cpp
 )
 
 pico_set_program_name(RPiLinearServo "RPiLinearServo")
-pico_set_program_version(RPiLinearServo "0.1")
+pico_set_program_version(RPiLinearServo "${FW_VERSION_MAJOR}.${FW_VERSION_MINOR}.${FW_VERSION_PATCH}")
+
+target_compile_definitions(RPiLinearServo PRIVATE
+        FW_VERSION_MAJOR=${FW_VERSION_MAJOR}
+        FW_VERSION_MINOR=${FW_VERSION_MINOR}
+        FW_VERSION_PATCH=${FW_VERSION_PATCH}
+        FW_GIT_HASH="${FW_GIT_HASH}"
+)
 
 # PIO header generation
 pico_generate_pio_header(RPiLinearServo
@@ -77,6 +122,7 @@ target_include_directories(RPiLinearServo PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/usb
         ${CMAKE_CURRENT_LIST_DIR}/ui
         ${CMAKE_CURRENT_LIST_DIR}/drivers/hall_sensor
+        ${CMAKE_CURRENT_LIST_DIR}/power
 )
 
 # Libraries
@@ -93,6 +139,8 @@ target_link_libraries(RPiLinearServo
         hardware_flash
         hardware_sync
         hardware_adc
+        hardware_xosc
+        hardware_pll
 )
 
 # Extra outputs (.uf2, .bin, .hex, .map, .dis)

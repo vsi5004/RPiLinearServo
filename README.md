@@ -6,17 +6,18 @@ A closed-loop linear servo based on the RP2040, using a micro stepper linear act
 
 ![RPiLinearServo rear](Docs/rear_render.png)
 
+
 ## Features
 
-- **Silent stepper control** — TMC2209 StealthChop with PIO-based step generation and trapezoidal acceleration
-- **RC PWM input** — standard 1000–2000 µs servo signal mapped to linear position with 16 ns resolution
-- **Auto-home on first PWM pulse** — hardstop homing with optional hall-effect stall detection
-- **Hall-effect feedback** — DRV5055 sensor with 64× oversampled ADC and 128-entry calibration LUT for lost-step detection
-- **USB Config Drive** — composite CDC + MSC device exposes an editable `CONFIG.INI` on a virtual FAT12 drive
-- **Interactive USB CLI** — full command set for motion control, diagnostics, and configuration
-- **NVM persistence** — position, configuration, and hall calibration survive power cycles (CRC32-protected flash sectors)
-- **WS2812 status LED** — state-driven animations (idle, holding, moving, homing, fault) with optional dark mode
-- **Immediate PWM response on boot** — no blocking USB wait
+- Controllable via standard servo PWM signal allowing for plug-and-play integration in systems designed for miniature R/C servos
+- Easy firmware updates - just drag and drop compiled binary into mounted drive to flash
+- Widely configurable by editing a `CONFIG.INI` file when device is connected as a usb drive to allow for adaptation to wide range of use cases
+- Smooth, quiet, controllable, and repeatable motion not available in smaller servos
+- Non-backdrivable lead screw linear stage can be powered off in a low power state while not in use
+- Automatic homing routine runs once and is then stored and persists throughout the life of the device
+- Closed loop magnetic feedback allows for seamless, accurate adjustments if external factors cause motor to miss steps
+- Interactive USB CLI (via serial monitor) exposes full command set for motion control, diagnostics, and debugging
+
 
 ## Hardware
 
@@ -71,6 +72,9 @@ max_us = 2000
 [led]
 dark_mode = false
 
+[power]
+sleep_when_idle = false
+
 [sensor]
 use_hall_effect = false
 ```
@@ -112,4 +116,4 @@ Commands:
 
 ## License
 
-TBD
+This project is licensed under the [MIT License](LICENSE).
