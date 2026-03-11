@@ -1,4 +1,3 @@
-// ── pwm_input.cpp ───────────────────────────────────────────────────────
 // PIO-based RC PWM pulse-width capture.
 // Uses PIO1 / SM1 (PIO1/SM0 is WS2812, PIO0/SM0 is stepgen).
 
@@ -10,11 +9,11 @@
 #include "hardware/clocks.h"
 #include "pico/stdlib.h"
 
-// ── PIO instance ───────────────────────────────────────────────────────
+// PIO instance
 static PIO  s_pio = pio1;
 static uint s_sm  = 1;          // SM1 (SM0 is WS2812)
 
-// ── State ──────────────────────────────────────────────────────────────
+// State
 static uint32_t        s_last_us       = 0;     // latest valid pulse (µs)
 static bool            s_valid         = false;  // last pulse in range?
 static absolute_time_t s_last_valid_at;          // timestamp of last valid pulse
@@ -25,7 +24,7 @@ static bool            s_ever_valid    = false;  // have we ever seen a valid pu
 // pulse_us = count * 2 / (clk_sys / 1e6)  =  count * 2e6 / clk_sys
 static float s_counts_to_us = 0.0f;
 
-// ── Public API ─────────────────────────────────────────────────────────
+// Public API ─────────────────────────────────────────────────────────
 
 void pwm_input_init(uint pin) {
     uint offset = pio_add_program(s_pio, &pwm_capture_program);

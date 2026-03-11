@@ -1,0 +1,191 @@
+# Firmware — RPiLinearServo
+
+C++17 firmware for the RP2040-Zero targeting the Pico SDK. Implements closed-loop stepper control, RC PWM tracking, USB configuration, and interactive CLI.
+
+## Build
+
+### Prerequisites
+
+- [Pico SDK](https://github.com/raspberrypi/pico-sdk) v2.2.0 — set `PICO_SDK_PATH` environment variable
+- ARM GCC toolchain (14.2 Rel1 or compatible)
+- CMake ≥ 3.13
+- Ninja (or Make)
+
+### Build from source
+
+```bash
+cd Firmware/RPiLinearServo
+mkdir -p build && cd build
+cmake ..
+ninja
+```
+
+This produces `RPiLinearServo.uf2` along with `.bin`, `.hex`, `.dis` (disassembly), and `.map` (symbol map) outputs.
+
+### Flash
+
+1. Hold **BOOTSEL** on the RP2040-Zero and plug in USB.
+2. Drag `RPiLinearServo.uf2` onto the **RPI-RP2** drive.
+3. The board reboots and enumerates as a composite USB device (CDC serial + MSC config drive).
+
+Alternatively, use the **Run Project** task in VS Code to build and flash in one step.
+
+### VS Code development
+
+The project includes CMake presets and VS Code tasks for a streamlined workflow:
+
+1. Set `PICO_SDK_PATH` in your environment (or in `.vscode/settings.json`).
+2. Open the `Firmware/RPiLinearServo` folder in VS Code.
+3. CMake Tools will auto-configure the build directory.
+4. Use **Build** (Ctrl+Shift+B) and **Run Project** tasks.
+
+## Architecture
+
+### Main loop
+
+The firmware runs a single-core bare-metal event loop (`main.cpp`). There is no RTOS — all work is cooperative:
+
+```
+main loop
+  ├── cli_poll()                  USB command processing (non-blocking)
+  ├── msc_disk_poll()             Detect CONFIG.INI writes → apply settings
+  ├── servo_loop_poll()           PWM tracking, homing, post-move verification
+  │     ├── poll_pwm_input()          Position tracking from RC signal
+  │     ├── poll_move_complete()      Hall-based lost-step detection
+  │     ├── poll_auto_disable()       Idle timeout → disable driver
+  │     └── poll_hall_logging()       250 Hz hall sampling during moves
+  ├── status_led_update()         WS2812 LED animation state machine
+  └── position_save_if_needed()   Throttled NVM write (≤ once per 30 s)
+```
+
+### Interrupt / real-time layer
+
+| Source | Handler | Purpose |
+|---|---|---|
+| PIO0 IRQ0 | Step counter ISR | Increment/decrement position on every STEP rising edge |
+| 1 kHz repeating timer | Accel/decel ISR | Update PIO clock divider for trapezoidal speed profile |
+| PIO1 RX FIFO | PWM capture | New pulse width measurement available |
+
+## Modules
+
+### Step Generation (`drivers/stepgen/`)
+
+PIO0/SM0 runs a 4-cycle program that generates a square wave on the STEP pin and fires IRQ0 on each rising edge. The CPU IRQ handler maintains an exact position counter (no drift).
+
+Speed is controlled by adjusting the PIO state machine clock divider:
+
+$$f_{step} = \frac{f_{clk\_sys}}{4 \times clk\_div}$$
+
+Key functions:
+- `stepgen_move(steps, speed_hz)` — move exactly N steps at constant speed
+- `stepgen_move_accel(steps, max_hz, accel_hz_per_s)` — trapezoidal acceleration profile via 1 kHz timer
+- `stepgen_run(speed_hz)` — continuous stepping
+- `stepgen_get_position()` — read current step count
+
+### TMC2209 Driver (`drivers/tmc2209/`)
+
+Communicates over hardware UART1 (115200 baud, 8N1) on a half-duplex single-wire bus. Reads and writes TMC2209 registers with CRC8 validation. The TX pin is tri-stated after each write to allow the driver to reply.
+
+At startup the firmware writes the following registers:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `run_current_ma` | 100 | RMS run current (mA) |
+| `hold_current_ma` | 50 | RMS hold current (mA) |
+| `microsteps` | 8 | Microstepping divisor |
+| `stealthchop_en` | true | StealthChop (quiet) mode |
+| `tpowerdown` | 46 | ~1 s IRUN → IHOLD ramp |
+
+- `GCONF = 0x1C0` — full software current control, PDN disabled, register-select microstepping, multistep filter.
+- `CHOPCONF` — only MRES and interpolation bits are modified; OTP defaults for TBL / HSTRT / HEND are preserved.
+
+All parameters are runtime-configurable via the USB config drive (`CONFIG.INI`).
+
+### PWM Input (`drivers/pwm_input/`)
+
+PIO1/SM1 measures the HIGH time of an RC servo pulse at 16 ns resolution (125 MHz system clock). Valid range is configurable (default 1000–2000 µs). A timeout fires if no valid pulse is received within `pwm_timeout_ms`.
+
+### Hall Sensor (`drivers/hall_sensor/`)
+
+Reads the DRV5055 analog output on ADC0 (GP26) with 64× oversampling across 5 accumulated reads per update. An optional EMA filter smooths the signal. Used for:
+- Stall detection during homing (voltage derivative monitoring)
+- Post-move position verification via 128-entry calibration LUT
+- Lost-step correction (single attempt, then fault if still out of tolerance)
+
+### Servo Loop (`motion/`)
+
+The top-level motion coordinator, polled from the main loop:
+
+- **PWM tracking** — maps pulse width to a target position, applies deadband, and commands moves with acceleration
+- **Auto-home** — triggers homing on the first valid PWM pulse if not already homed
+- **Post-move verification** — after each move settles, compares the hall sensor reading against the calibration LUT and attempts a single correction if a mismatch is detected
+- **Auto-disable** — disables the driver after `auto_disable_ms` of idle time
+
+### Homing (`motion/homing.cpp`)
+
+Hardstop homing sequence:
+
+1. Drive `home_margin × stroke` steps into the end-stop at `home_speed_mm_s`
+2. Monitor hall sensor: stall detected when voltage derivative falls below threshold for 5 consecutive samples (after 20% of stroke has been commanded)
+3. Back off by `backoff_mm` with acceleration
+4. Calibration sweep: slow pass across full stroke to build 128-entry V-curve LUT
+5. Reset position to 0, save LUT to flash
+
+### USB (`usb/`)
+
+Composite TinyUSB device with two interfaces:
+
+- **CDC** — USB serial port for the interactive CLI
+- **MSC** — virtual FAT12 mass storage drive (8 KB RAMdisk) exposing `CONFIG.INI`
+
+The MSC driver detects write completions with a 500 ms idle timeout, then parses the INI, validates ranges, saves to flash, and re-applies driver settings.
+
+### Storage (`storage/`)
+
+All persistent data lives in dedicated 4 KB sectors at the end of the 2 MB flash:
+
+| Offset | Purpose | Protection |
+|---|---|---|
+| `0x1F0000` | Position slot A | CRC32, dual-slot wear leveling |
+| `0x1F1000` | Position slot B | CRC32, dual-slot wear leveling |
+| `0x1F2000` | ServoConfig | CRC32, magic + version |
+| `0x1F3000` | Hall calibration LUT | CRC32, magic + version |
+
+Position saves are throttled to once every 30 seconds to protect flash endurance. An immediate save occurs after homing.
+
+### Status LED (`ui/status_led.cpp`)
+
+WS2812 state machine with the following visual states:
+
+| State | Pattern |
+|---|---|
+| OFF | Dark (dark mode enabled) |
+| IDLE | Amber breathing pulse (~5 s period) |
+| HOLDING | Solid green |
+| MOVING | Solid blue |
+| HOMING | Rapid blue flash (100 ms period) |
+| HOMING_DONE | 3× green flash → HOLDING |
+| STALL_FAULT | Rapid red flash |
+| ERROR | Solid red |
+
+## Configuration Reference
+
+The `ServoConfig` struct (`include/config.h`) contains all runtime parameters. Defaults are compiled in and can be overridden via the USB config drive or flash persistence.
+
+| Section | Parameter | Default | Description |
+|---|---|---|---|
+| Stroke | `stroke_mm` | 8.40 | Actuator travel (mm) |
+| | `full_steps_per_mm` | 208.3 | Motor full steps per mm |
+| Driver | `dir_invert` | false | Invert direction pin |
+| | `run_current_ma` | 100 | RMS run current (mA) |
+| | `hold_current_ma` | 50 | RMS hold current (mA) |
+| | `microsteps` | 8 | Microstepping divisor |
+| | `stealthchop_en` | true | StealthChop mode |
+| Motion | `default_speed_mm_s` | 40.0 | Default move speed (mm/s) |
+| | `max_accel_mm_s2` | 80.0 | Acceleration limit (mm/s²) |
+| | `auto_disable_ms` | 2000 | Idle timeout before disabling driver (0 = never) |
+| RC PWM | `pwm_min_us` | 1000 | Minimum valid pulse width (µs) |
+| | `pwm_max_us` | 2000 | Maximum valid pulse width (µs) |
+| | `pwm_timeout_ms` | 100 | Signal-lost timeout (ms) |
+| LED | `dark_mode` | false | Disable status LED |
+| Sensor | `use_hall_effect` | false | Enable hall sensor feedback |

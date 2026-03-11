@@ -1,6 +1,3 @@
-// ── ws2812.cpp ──────────────────────────────────────────────────────────
-// Low-level WS2812 RGB LED — PIO1 / SM0.
-
 #include "ws2812.h"
 #include "ws2812.pio.h"
 

@@ -1,6 +1,5 @@
 #pragma once
 
-// ── pwm_input.h ─────────────────────────────────────────────────────────
 // PIO-based RC PWM pulse-width capture on a single GPIO.
 // Measures the HIGH time of each PWM frame and validates it against
 // the configured [min_us, max_us] range with a margin.

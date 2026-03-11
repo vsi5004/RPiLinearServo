@@ -1,8 +1,5 @@
 #pragma once
 
-// ── config_ini.h ────────────────────────────────────────────────────────
-// Minimal INI parser for CONFIG.INI on the USB mass storage drive.
-
 #include "config.h"
 #include <cstddef>
 

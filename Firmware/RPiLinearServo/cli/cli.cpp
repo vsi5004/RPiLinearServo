@@ -1,15 +1,13 @@
-// ── cli.cpp ─────────────────────────────────────────────────────────────
-// Interactive command-line interface over USB CDC.
-
 #include "cli.h"
 #include "stepgen.h"
 #include "homing.h"
 #include "tmc2209.h"
 #include "pwm_input.h"
-#include "nvm_store.h"
+#include "position_store.h"
 #include "config.h"
 #include "pins.h"
 #include "status_led.h"
+#include "hall_sensor.h"
 
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
@@ -18,17 +16,15 @@
 #include <cstdlib>
 #include <cctype>
 
-// ── Line buffer ────────────────────────────────────────────────────────
+
 static constexpr size_t CLI_BUF_SIZE = 128;
 static char     s_buf[CLI_BUF_SIZE];
 static size_t   s_buf_pos = 0;
 static uint32_t s_default_speed_hz = 0;   // initialised in cli_init()
 
-// ── Forward declarations ───────────────────────────────────────────────
+
 static void cli_process_line(char *line);
 static void cli_prompt();
-
-// ── Helpers ────────────────────────────────────────────────────────────
 
 // Skip leading whitespace, return pointer to first non-space or '\0'.
 static char *skip_ws(char *p) {
@@ -48,7 +44,6 @@ static char *next_token(char **pp) {
     return start;
 }
 
-// ── Public API ─────────────────────────────────────────────────────────
 
 void cli_init() {
     s_buf_pos = 0;
@@ -81,7 +76,6 @@ void cli_poll() {
     }
 }
 
-// ── Command handlers ───────────────────────────────────────────────────
 
 static void cmd_help() {
     printf("Commands:\n");
@@ -97,7 +91,10 @@ static void cmd_help() {
     printf("  pos                      Print position\n");
     printf("  status                   Print full status\n");
     printf("  pwm                      Print PWM input status\n");
-    printf("  nvm                      Print/save NVM state\n");
+    printf("  nvm                      Print/save position state\n");
+    printf("  hall                     Hall sensor reading\n");
+    printf("  hallcal                  Dump hall calibration table\n");
+    printf("  faultclr                 Clear stall fault\n");
     printf("  help                     This message\n");
 }
 
@@ -113,10 +110,17 @@ static void cmd_move(char *args) {
     uint32_t hz = tok ? (uint32_t)atoi(tok) : s_default_speed_hz;
 
     if (hz == 0) hz = s_default_speed_hz;
+
+    // Block moves while faulted — post-move verification handles correction
+    if (g_stall_fault) {
+        printf("error: stall fault active — run 'home' or 'faultclr'\n");
+        return;
+    }
+
     printf("move %ld steps @ %lu Hz  accel=%lu Hz/s\n",
            (long)steps, (unsigned long)hz,
            (unsigned long)g_config.accel_hz_per_s());
-    gpio_put(PIN_EN, g_config.en_active_low ? 0 : 1);
+    gpio_put(PIN_EN, EN_ENABLE);
     status_led_set(LedStatus::MOVING);
     stepgen_move_accel(steps, hz, g_config.accel_hz_per_s());
 }
@@ -126,7 +130,7 @@ static void cmd_run(char *args) {
     uint32_t hz = tok ? (uint32_t)atoi(tok) : s_default_speed_hz;
     if (hz == 0) hz = s_default_speed_hz;
     printf("run @ %lu Hz\n", (unsigned long)hz);
-    gpio_put(PIN_EN, g_config.en_active_low ? 0 : 1);
+    gpio_put(PIN_EN, EN_ENABLE);
     status_led_set(LedStatus::MOVING);
     stepgen_run(hz);
 }
@@ -141,18 +145,18 @@ static void cmd_home() {
     if (stepgen_is_busy()) {
         printf("error: motor busy — stop first\n");
         return;
-    }    gpio_put(PIN_EN, g_config.en_active_low ? 0 : 1);    homing_run();
+    }    gpio_put(PIN_EN, EN_ENABLE);    homing_run();
 }
 
 static void cmd_enable() {
-    gpio_put(PIN_EN, g_config.en_active_low ? 0 : 1);
+    gpio_put(PIN_EN, EN_ENABLE);
     printf("driver enabled\n");
     status_led_set(LedStatus::HOLDING);
 }
 
 static void cmd_disable() {
     stepgen_stop();
-    gpio_put(PIN_EN, g_config.en_active_low ? 1 : 0);
+    gpio_put(PIN_EN, EN_DISABLE);
     printf("driver disabled\n");
     status_led_set(LedStatus::OFF);
 }
@@ -207,7 +211,7 @@ static void cmd_ramp(char *args) {
     // Start continuous stepping at initial speed
     stepgen_set_dir(steps > 0);
     stepgen_set_speed_hz(from_hz);
-    gpio_put(PIN_EN, g_config.en_active_low ? 0 : 1);
+    gpio_put(PIN_EN, EN_ENABLE);
     status_led_set(LedStatus::MOVING);
     stepgen_run(from_hz);
 
@@ -239,7 +243,7 @@ static void cmd_pos() {
 
 static void cmd_status() {
     bool en_pin = gpio_get(PIN_EN);
-    bool driver_on = g_config.en_active_low ? !en_pin : en_pin;
+    bool driver_on = (en_pin == EN_ENABLE);
 
     printf("── status ──\n");
     printf("  driver:    %s\n", driver_on ? "ENABLED" : "disabled");
@@ -252,6 +256,7 @@ static void cmd_status() {
            (long)pos, (float)pos / g_config.steps_per_mm());
     printf("  config:    %.0f steps/mm, stroke %.1f mm\n",
            g_config.steps_per_mm(), g_config.stroke_mm);
+    printf("  fault:     %s\n", g_stall_fault ? "STALL" : "none");
 }
 
 static void cmd_diag() {
@@ -337,27 +342,27 @@ static void cmd_pwm() {
 static void cmd_nvm(char *args) {
     char *tok = next_token(&args);
     if (tok && strcmp(tok, "save") == 0) {
-        NvmData d;
+        PositionState d;
         d.homed          = g_homed;
         d.position_steps = stepgen_get_position();
-        if (nvm_save(d))
+        if (position_save(d))
             printf("NVM saved\n");
         else
             printf("NVM save failed\n");
         return;
     }
     if (tok && strcmp(tok, "clear") == 0) {
-        NvmData d;
+        PositionState d;
         d.homed          = false;
         d.position_steps = 0;
-        nvm_save(d);
+        position_save(d);
         g_homed = false;
         printf("NVM cleared — homed=false, pos=0\n");
         return;
     }
     // Default: print current state
-    NvmData d;
-    bool valid = nvm_load(d);
+    PositionState d;
+    bool valid = position_load(d);
     printf("\u2500\u2500 NVM \u2500\u2500\n");
     printf("  flash:   %s\n", valid ? "valid" : "empty/corrupt");
     printf("  homed:   %d\n", d.homed);
@@ -366,34 +371,6 @@ static void cmd_nvm(char *args) {
     printf("  live:    homed=%d  pos=%ld\n",
            g_homed, (long)stepgen_get_position());
 }
-static void cmd_wreg(char *args) {
-    char *tok1 = next_token(&args);
-    char *tok2 = next_token(&args);
-    if (!tok1 || !tok2) {
-        printf("usage: wreg <reg_hex> <value_hex>\n");
-        return;
-    }
-    uint8_t  reg = (uint8_t)strtoul(tok1, nullptr, 16);
-    uint32_t val = strtoul(tok2, nullptr, 16);
-    printf("write reg 0x%02X = 0x%08lX\n", reg, (unsigned long)val);
-    tmc2209_write_reg(reg, val);
-    sleep_ms(20);
-    uint32_t rb = tmc2209_read_reg(reg);
-    printf("readback   0x%02X = 0x%08lX\n", reg, (unsigned long)rb);
-}
-
-static void cmd_rreg(char *args) {
-    char *tok = next_token(&args);
-    if (!tok) {
-        printf("usage: rreg <reg_hex>\n");
-        return;
-    }
-    uint8_t reg = (uint8_t)strtoul(tok, nullptr, 16);
-    uint32_t val = tmc2209_read_reg(reg);
-    printf("reg 0x%02X = 0x%08lX (%lu)\n", reg, (unsigned long)val, (unsigned long)val);
-}
-
-// ── Dispatcher ─────────────────────────────────────────────────────────
 
 static void cli_process_line(char *line) {
     char *cmd = next_token(&line);
@@ -414,8 +391,36 @@ static void cli_process_line(char *line) {
     else if (strcmp(cmd, "diag")    == 0) cmd_diag();
     else if (strcmp(cmd, "pwm")     == 0) cmd_pwm();
     else if (strcmp(cmd, "nvm")     == 0) cmd_nvm(line);
-    else if (strcmp(cmd, "wreg")    == 0) cmd_wreg(line);
-    else if (strcmp(cmd, "rreg")    == 0) cmd_rreg(line);
+    else if (strcmp(cmd, "faultclr") == 0) {
+        g_stall_fault = false;
+        status_led_set(LedStatus::HOLDING);
+        printf("stall fault cleared\n");
+    }
+    else if (strcmp(cmd, "hall")    == 0) {
+        if (!hall_sensor_enabled()) {
+            printf("hall sensor disabled (use_hall_effect=false)\n");
+        } else {
+            hall_sensor_update();
+            printf("raw=%u  mv=%u  filtered=%.1f mV\n",
+                   hall_sensor_read_raw(), hall_sensor_read_mv(),
+                   (double)hall_sensor_filtered_mv());
+        }
+    }
+    else if (strcmp(cmd, "hallcal") == 0) {
+        if (!hall_cal_is_valid()) {
+            printf("no calibration data (run 'home' first)\n");
+        } else {
+            int n = hall_cal_count();
+            const HallCalEntry *tbl = hall_cal_table();
+            printf("hall calibration: %d entries\n", n);
+            for (int i = 0; i < n; i++) {
+                printf("  [%3d] step=%-6ld  mm=%-6.2f  mv=%.1f\n",
+                       i, (long)tbl[i].step_pos,
+                       (double)((float)tbl[i].step_pos / g_config.steps_per_mm()),
+                       (double)tbl[i].mv);
+            }
+        }
+    }
     else printf("unknown command: %s  (type 'help')\n", cmd);
 }
 

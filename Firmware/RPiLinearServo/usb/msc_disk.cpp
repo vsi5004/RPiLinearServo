@@ -1,4 +1,3 @@
-// ── msc_disk.cpp ────────────────────────────────────────────────────────
 // Virtual FAT12 USB mass storage disk for RPiLinearServo.
 //
 // Layout (16 × 512-byte blocks = 8 KB):
@@ -6,8 +5,7 @@
 //   Block 1     FAT12 table
 //   Block 2     Root directory (16 entries)
 //   Block 3-6   CONFIG.INI data (4 clusters = 2048 bytes max)
-//   Block 7-8   STATUS.TXT data (2 clusters = 1024 bytes max)
-//   Block 9-15  Unused
+//   Block 7-15  Unused
 //
 // CONFIG.INI is generated from g_config on init/refresh.
 // When the host writes to CONFIG.INI blocks, we buffer the data and
@@ -23,38 +21,32 @@
 #include <cstdio>
 #include <cstring>
 
-// ── Disk geometry ──────────────────────────────────────────────────────
-#define DISK_BLOCK_SIZE  512
-#define DISK_BLOCK_NUM   16    // 8 KB total — smallest Windows will mount
+// Disk geometry
+static constexpr uint32_t DISK_BLOCK_SIZE = 512;
+static constexpr uint32_t DISK_BLOCK_NUM  = 16;   // 8 KB total — smallest Windows will mount
 
 // Block assignments
-#define BLK_BOOT    0
-#define BLK_FAT     1
-#define BLK_ROOT    2
-#define BLK_CFG     3   // CONFIG.INI starts here (clusters 2-5)
-#define BLK_CFG_END 6   // inclusive
-#define BLK_STS     7   // STATUS.TXT starts here (clusters 6-7)
-#define BLK_STS_END 8   // inclusive
+static constexpr int BLK_BOOT    = 0;
+static constexpr int BLK_FAT     = 1;
+static constexpr int BLK_ROOT    = 2;
+static constexpr int BLK_CFG     = 3;   // CONFIG.INI starts here (clusters 2-5)
+static constexpr int BLK_CFG_END = 6;   // inclusive
 
-#define CFG_MAX_SIZE  ((BLK_CFG_END - BLK_CFG + 1) * DISK_BLOCK_SIZE)  // 2048
-#define STS_MAX_SIZE  ((BLK_STS_END - BLK_STS + 1) * DISK_BLOCK_SIZE)  // 1024
+static constexpr uint32_t CFG_MAX_SIZE = (BLK_CFG_END - BLK_CFG + 1) * DISK_BLOCK_SIZE;  // 2048
 
-// ── RAM disk image ─────────────────────────────────────────────────────
+// RAM disk image
 static uint8_t s_disk[DISK_BLOCK_NUM][DISK_BLOCK_SIZE];
 
-// ── File content buffers ───────────────────────────────────────────────
+// File content buffers
 static char s_cfg_buf[CFG_MAX_SIZE];   // CONFIG.INI text
 static uint32_t s_cfg_len = 0;
 
-static char s_sts_buf[STS_MAX_SIZE];   // STATUS.TXT text
-static uint32_t s_sts_len = 0;
-
-// ── Write tracking ─────────────────────────────────────────────────────
+// Write tracking
 static bool s_cfg_dirty = false;
 static absolute_time_t s_last_write_time;
 static constexpr uint32_t WRITE_IDLE_MS = 500;
 
-// ── FAT12 helpers ──────────────────────────────────────────────────────
+// FAT12 helpers
 
 // Put a 32-bit LE value at offset in a block
 static void put_le16(uint8_t *p, uint16_t v) {
@@ -95,11 +87,10 @@ static void dir_entry(uint8_t *ent, const char *name83, uint8_t attr,
     put_le32(ent + 28, size);
 }
 
-// ── Build the disk image ───────────────────────────────────────────────
 static void build_disk(void) {
     memset(s_disk, 0, sizeof(s_disk));
 
-    // ── Block 0: Boot sector (BPB) ────────────────────────────────────
+    // Block 0: Boot sector (BPB) 
     uint8_t *boot = s_disk[BLK_BOOT];
     boot[0] = 0xEB; boot[1] = 0x3C; boot[2] = 0x90;  // JMP short
     memcpy(boot + 3, "MSDOS5.0", 8);                  // OEM name
@@ -119,7 +110,7 @@ static void build_disk(void) {
     memcpy(boot + 54, "FAT12   ", 8);       // filesystem type
     boot[510] = 0x55; boot[511] = 0xAA;    // boot signature
 
-    // ── Block 1: FAT12 table ──────────────────────────────────────────
+    // Block 1: FAT12 table
     uint8_t *fat = s_disk[BLK_FAT];
     fat[0] = 0xF8; fat[1] = 0xFF; fat[2] = 0xFF;  // media + reserved clusters 0,1
 
@@ -134,18 +125,7 @@ static void build_disk(void) {
         fat12_set(fat, cluster, next);
     }
 
-    // STATUS.TXT: clusters 6,7 (blocks 7,8)
-    uint16_t sts_clusters = (s_sts_len > 0)
-        ? (uint16_t)((s_sts_len + DISK_BLOCK_SIZE - 1) / DISK_BLOCK_SIZE)
-        : 1;
-    if (sts_clusters > 2) sts_clusters = 2;
-    for (uint16_t i = 0; i < sts_clusters; i++) {
-        uint16_t cluster = 6 + i;
-        uint16_t next = (i + 1 < sts_clusters) ? cluster + 1 : 0xFFF;
-        fat12_set(fat, cluster, next);
-    }
-
-    // ── Block 2: Root directory ───────────────────────────────────────
+    // Block 2: Root directory
     uint8_t *root = s_disk[BLK_ROOT];
 
     // Entry 0: volume label
@@ -155,10 +135,7 @@ static void build_disk(void) {
     // Entry 1: CONFIG.INI
     dir_entry(root + 32, "CONFIG  INI", 0x20, 2, s_cfg_len);
 
-    // Entry 2: STATUS.TXT (read-only attribute)
-    dir_entry(root + 64, "STATUS  TXT", 0x21, 6, s_sts_len);
-
-    // ── Data blocks: CONFIG.INI content ───────────────────────────────
+    // Data blocks: CONFIG.INI content
     if (s_cfg_len > 0) {
         uint32_t remaining = s_cfg_len;
         for (int blk = BLK_CFG; blk <= BLK_CFG_END && remaining > 0; blk++) {
@@ -168,18 +145,9 @@ static void build_disk(void) {
         }
     }
 
-    // ── Data blocks: STATUS.TXT content ───────────────────────────────
-    if (s_sts_len > 0) {
-        uint32_t remaining = s_sts_len;
-        for (int blk = BLK_STS; blk <= BLK_STS_END && remaining > 0; blk++) {
-            uint32_t chunk = remaining > DISK_BLOCK_SIZE ? DISK_BLOCK_SIZE : remaining;
-            memcpy(s_disk[blk], s_sts_buf + (blk - BLK_STS) * DISK_BLOCK_SIZE, chunk);
-            remaining -= chunk;
-        }
-    }
 }
 
-// ── Generate CONFIG.INI from g_config ──────────────────────────────────
+// Generate CONFIG.INI from g_config
 static void generate_config_ini(void) {
     int n = snprintf(s_cfg_buf, sizeof(s_cfg_buf),
         "; RPiLinearServo Configuration\r\n"
@@ -187,6 +155,7 @@ static void generate_config_ini(void) {
         "\r\n"
         "[stroke]\r\n"
         "stroke_mm = %.2f\r\n"
+        "full_steps_per_mm = %.1f\r\n"
         "\r\n"
         "[driver]\r\n"
         "dir_invert = %s\r\n"
@@ -203,8 +172,12 @@ static void generate_config_ini(void) {
         "max_us = %lu\r\n"
         "\r\n"
         "[led]\r\n"
-        "dark_mode = %s\r\n",
+        "dark_mode = %s\r\n"
+        "\r\n"
+        "[sensor]\r\n"
+        "use_hall_effect = %s\r\n",
         (double)g_config.stroke_mm,
+        (double)g_config.full_steps_per_mm,
         g_config.dir_invert ? "true" : "false",
         (unsigned)g_config.run_current_ma,
         (unsigned)g_config.hold_current_ma,
@@ -213,41 +186,22 @@ static void generate_config_ini(void) {
         (unsigned long)g_config.auto_disable_ms,
         (unsigned long)g_config.pwm_min_us,
         (unsigned long)g_config.pwm_max_us,
-        g_config.led_dark_mode ? "true" : "false"
+        g_config.led_dark_mode ? "true" : "false",
+        g_config.use_hall_effect ? "true" : "false"
     );
     s_cfg_len = (n > 0 && n < (int)sizeof(s_cfg_buf)) ? (uint32_t)n : 0;
 }
 
-// ── Generate STATUS.TXT ────────────────────────────────────────────────
-static void generate_status_txt(void) {
-    int n = snprintf(s_sts_buf, sizeof(s_sts_buf),
-        "RPiLinearServo v%d.%d.%d\r\n"
-        "Status: OK\r\n",
-        FW_VERSION_MAJOR, FW_VERSION_MINOR, FW_VERSION_PATCH
-    );
-    s_sts_len = (n > 0 && n < (int)sizeof(s_sts_buf)) ? (uint32_t)n : 0;
-}
-
-// ── Public API ─────────────────────────────────────────────────────────
+// Public API
 
 void msc_disk_init(void) {
     generate_config_ini();
-    generate_status_txt();
     build_disk();
     s_cfg_dirty = false;
 }
 
 void msc_disk_refresh(void) {
     generate_config_ini();
-    build_disk();
-}
-
-void msc_disk_set_status(const char *text) {
-    size_t len = strlen(text);
-    if (len >= sizeof(s_sts_buf)) len = sizeof(s_sts_buf) - 1;
-    memcpy(s_sts_buf, text, len);
-    s_sts_buf[len] = '\0';
-    s_sts_len = (uint32_t)len;
     build_disk();
 }
 
@@ -284,23 +238,8 @@ bool msc_disk_poll(void) {
     if (ok) {
         config_save(g_config);
         printf("[msc] config applied and saved\n");
-
-        char sts[512];
-        snprintf(sts, sizeof(sts),
-            "RPiLinearServo v%d.%d.%d\r\n"
-            "Config: Applied OK\r\n",
-            FW_VERSION_MAJOR, FW_VERSION_MINOR, FW_VERSION_PATCH);
-        msc_disk_set_status(sts);
     } else {
         printf("[msc] config error: %s\n", err_buf);
-
-        char sts[512];
-        snprintf(sts, sizeof(sts),
-            "RPiLinearServo v%d.%d.%d\r\n"
-            "Config: ERROR\r\n%s\r\n",
-            FW_VERSION_MAJOR, FW_VERSION_MINOR, FW_VERSION_PATCH,
-            err_buf);
-        msc_disk_set_status(sts);
     }
 
     // Regenerate CONFIG.INI from (possibly updated) g_config
@@ -308,7 +247,7 @@ bool msc_disk_poll(void) {
     return ok;
 }
 
-// ── TinyUSB MSC callbacks ──────────────────────────────────────────────
+// TinyUSB MSC callbacks
 
 extern "C" void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor_id[8],
                                     uint8_t product_id[16],

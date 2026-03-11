@@ -1,6 +1,5 @@
 #pragma once
 
-// ── config_store.h ──────────────────────────────────────────────────────
 // Binary config persistence in flash for user-editable settings.
 // Separate from NVM (homing/position) — uses its own 4 KB sector.
 

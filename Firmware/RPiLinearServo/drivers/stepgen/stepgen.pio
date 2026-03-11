@@ -1,4 +1,3 @@
-; ── stepgen.pio ──────────────────────────────────────────────────────────
 ; PIO step-pulse generator for STEP/DIR stepper drivers (TMC2209).
 ;
 ; Generates a symmetric square wave on the SET pin.  Each full cycle

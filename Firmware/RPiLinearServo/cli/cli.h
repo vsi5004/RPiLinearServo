@@ -1,6 +1,5 @@
 #pragma once
 
-// ── CLI ────────────────────────────────────────────────────────────────
 // Line-buffered command interface over USB CDC (stdio).
 // Call cli_init() once, then cli_poll() from the main loop.
 

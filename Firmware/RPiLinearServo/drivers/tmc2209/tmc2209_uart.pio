@@ -1,4 +1,3 @@
-; ── tmc2209_uart.pio ──────────────────────────────────────────────────────
 ; Half-duplex PIO UART for TMC2209 single-wire interface.
 ;
 ; PCB topology:
@@ -17,7 +16,7 @@
 ;   2. To send:  enable TX SM, disable RX SM while transmitting (avoid echo capture).
 ;   3. After TX: drain echo bytes, then enable RX SM to capture reply.
 
-; ── TX program ───────────────────────────────────────────────────────────
+; TX program
 ; Maps to OUT pin = TX pin (GP4).
 ; Idle state is high.  Start bit is low.  8 data bits LSB first.  Stop bit high.
 ; Each bit takes exactly (8 × clkdiv / clk_sys) seconds.
@@ -62,7 +61,7 @@ static inline void uart_tx_program_init(PIO pio, uint sm, uint offset,
 %}
 
 
-; ── RX program ───────────────────────────────────────────────────────────
+; RX program
 ; Maps to IN pin = RX pin (GP3).
 ; Detects start bit falling edge, samples centre of each bit period.
 ; Pushes 8 data bits (LSB first) into RX FIFO as a 32-bit word.

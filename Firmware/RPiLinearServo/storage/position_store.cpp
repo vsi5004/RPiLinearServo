@@ -1,10 +1,10 @@
-// ── nvm_store.cpp ───────────────────────────────────────────────────────
-// Flash-backed persistent storage with dual-slot A/B wear-leveling.
-// CRC32 validates each slot; the slot with the highest valid sequence
-// number is used on load.
+// Flash-backed persistent storage for stepper position and homing state.
+// Dual-slot A/B wear-leveling with CRC32 validation.
+// The slot with the highest valid sequence number is used on load.
 
-#include "nvm_store.h"
+#include "position_store.h"
 #include "config.h"
+#include "crc32.h"
 
 #include "hardware/flash.h"
 #include "hardware/sync.h"
@@ -12,51 +12,39 @@
 #include <cstdio>
 #include <cstring>
 
-// ── CRC32 (IEEE 802.3 polynomial, no lookup table) ─────────────────────
-static uint32_t crc32(const void *buf, size_t len) {
-    const uint8_t *p = static_cast<const uint8_t *>(buf);
-    uint32_t crc = 0xFFFFFFFF;
-    for (size_t i = 0; i < len; i++) {
-        crc ^= p[i];
-        for (int b = 0; b < 8; b++)
-            crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
-    }
-    return ~crc;
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────
+// Helpers
 
 // Read a slot from XIP-mapped flash.
-static bool read_slot(uint32_t flash_offset, NvmData &out) {
+static bool read_slot(uint32_t flash_offset, PositionState &out) {
     const uint8_t *ptr = reinterpret_cast<const uint8_t *>(
-        NVM_FLASH_BASE + flash_offset);
+        FLASH_XIP_BASE + flash_offset);
     std::memcpy(&out, ptr, sizeof(out));
 
-    if (out.magic != NVM_MAGIC || out.version != NVM_VERSION)
+    if (out.magic != POS_MAGIC || out.version != POS_VERSION)
         return false;
 
     // CRC covers everything up to (but not including) the crc field
-    uint32_t expected = crc32(&out, offsetof(NvmData, crc));
+    uint32_t expected = crc32(&out, offsetof(PositionState, crc));
     return out.crc == expected;
 }
 
 // Write a slot: erase sector, then program.
 // Interrupts must be disabled while the flash hardware is active because
 // XIP (execute-in-place) is suspended during erase/program.
-static bool write_slot(uint32_t flash_offset, const NvmData &data) {
+static bool write_slot(uint32_t flash_offset, const PositionState &data) {
     // Prepare a page-aligned write buffer (flash programs 256-byte pages)
     uint8_t page[FLASH_PAGE_SIZE];
     std::memset(page, 0xFF, sizeof(page));
     std::memcpy(page, &data, sizeof(data));
 
     uint32_t ints = save_and_disable_interrupts();
-    flash_range_erase(flash_offset, NVM_SECTOR_SIZE);
+    flash_range_erase(flash_offset, FLASH_SECTOR_SZ);
     flash_range_program(flash_offset, page, sizeof(page));
     restore_interrupts(ints);
     return true;
 }
 
-// ── Throttle state ─────────────────────────────────────────────────────
+// Throttle state
 static uint32_t        s_last_seq       = 0;
 static bool            s_next_is_b      = false;  // which slot to write next
 static absolute_time_t s_last_save_time;
@@ -64,14 +52,14 @@ static int32_t         s_saved_position  = 0;
 static bool            s_saved_homed     = false;
 static bool            s_initialised     = false;
 
-// ── Public API ─────────────────────────────────────────────────────────
+// Public API
 
-bool nvm_load(NvmData &out) {
-    NvmData a, b;
-    bool a_ok = read_slot(NVM_FLASH_OFFSET_A, a);
-    bool b_ok = read_slot(NVM_FLASH_OFFSET_B, b);
+bool position_load(PositionState &out) {
+    PositionState a, b;
+    bool a_ok = read_slot(FLASH_OFF_NVM_A, a);
+    bool b_ok = read_slot(FLASH_OFF_NVM_B, b);
 
-    const NvmData *best = nullptr;
+    const PositionState *best = nullptr;
 
     if (a_ok && b_ok) {
         // Both valid — pick highest sequence (wrapping-safe comparison)
@@ -90,20 +78,20 @@ bool nvm_load(NvmData &out) {
         s_last_seq      = best->sequence;
         s_saved_position = best->position_steps;
         s_saved_homed    = best->homed;
-        printf("[nvm] loaded slot %c  seq=%lu  homed=%d  pos=%ld\n",
+        printf("[pos] loaded slot %c  seq=%lu  homed=%d  pos=%ld\n",
                (best == &a) ? 'A' : 'B',
                (unsigned long)best->sequence,
                best->homed, (long)best->position_steps);
     } else {
         // No valid data — return defaults
         std::memset(&out, 0, sizeof(out));
-        out.magic    = NVM_MAGIC;
-        out.version  = NVM_VERSION;
+        out.magic    = POS_MAGIC;
+        out.version  = POS_VERSION;
         out.sequence = 0;
         out.homed    = false;
         out.position_steps = 0;
         out.crc      = 0;
-        printf("[nvm] no valid data — using defaults\n");
+        printf("[pos] no valid data — using defaults\n");
     }
 
     s_last_save_time = get_absolute_time();
@@ -111,18 +99,18 @@ bool nvm_load(NvmData &out) {
     return best != nullptr;
 }
 
-bool nvm_save(const NvmData &data) {
-    NvmData wr = data;
-    wr.magic    = NVM_MAGIC;
-    wr.version  = NVM_VERSION;
+bool position_save(const PositionState &data) {
+    PositionState wr = data;
+    wr.magic    = POS_MAGIC;
+    wr.version  = POS_VERSION;
     wr.sequence = ++s_last_seq;
-    wr.crc      = crc32(&wr, offsetof(NvmData, crc));
+    wr.crc      = crc32(&wr, offsetof(PositionState, crc));
 
-    uint32_t offset = s_next_is_b ? NVM_FLASH_OFFSET_B : NVM_FLASH_OFFSET_A;
+    uint32_t offset = s_next_is_b ? FLASH_OFF_NVM_B : FLASH_OFF_NVM_A;
     char slot_ch    = s_next_is_b ? 'B' : 'A';
     s_next_is_b     = !s_next_is_b;
 
-    printf("[nvm] saving slot %c  seq=%lu  homed=%d  pos=%ld\n",
+    printf("[pos] saving slot %c  seq=%lu  homed=%d  pos=%ld\n",
            slot_ch, (unsigned long)wr.sequence,
            wr.homed, (long)wr.position_steps);
 
@@ -134,7 +122,7 @@ bool nvm_save(const NvmData &data) {
     return ok;
 }
 
-void nvm_save_if_needed(int32_t position_steps, bool homed) {
+void position_save_if_needed(int32_t position_steps, bool homed) {
     if (!s_initialised) return;
 
     // Only save when something changed
@@ -147,8 +135,8 @@ void nvm_save_if_needed(int32_t position_steps, bool homed) {
     if (elapsed_us < (uint64_t)g_config.min_save_interval_s * 1000000)
         return;
 
-    NvmData d;
+    PositionState d;
     d.homed          = homed;
     d.position_steps = position_steps;
-    nvm_save(d);
+    position_save(d);
 }

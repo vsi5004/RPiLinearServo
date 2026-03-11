@@ -3,7 +3,6 @@
 #include <cstdint>
 #include "pico/types.h"    // for uint
 
-// ── Step Generator ─────────────────────────────────────────────────────
 // PIO-based STEP pulse generator with IRQ-counted position tracking.
 // Provides exact step counts (no drift) via PIO IRQ on every rising edge.
 

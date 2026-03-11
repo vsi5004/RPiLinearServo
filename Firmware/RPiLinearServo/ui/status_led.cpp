@@ -1,4 +1,3 @@
-// ── status_led.cpp ──────────────────────────────────────────────────────
 // WS2812 RGB status LED — non-blocking flash patterns & timed transitions.
 
 #include "status_led.h"
@@ -7,12 +6,10 @@
 
 #include "pico/stdlib.h"
 
-// ── State ──────────────────────────────────────────────────────────────
 static LedStatus       s_status    = LedStatus::OFF;
 static absolute_time_t s_state_entered;      // timestamp of last status_led_set()
 static uint8_t         s_flash_count = 0;    // for HOMING_DONE flash counter
 
-// ── Colours ────────────────────────────────────────────────────────────
 // Track last-sent pixel to avoid flooding the WS2812 protocol
 // (the LED needs >50 µs of idle/low between frames to latch).
 static uint32_t s_last_rgb = 0;
@@ -30,7 +27,6 @@ static void led_green()      { led_set(0,   32,  0);   }
 static void led_blue()       { led_set(0,   0,   32);  }
 static void led_red()        { led_set(32,  0,   0);   }
 
-// ── Timing helpers ─────────────────────────────────────────────────────
 
 // Milliseconds elapsed since s_state_entered.
 static uint32_t ms_in_state() {
@@ -44,7 +40,7 @@ static uint32_t tpowerdown_ms() {
     return (uint32_t)((uint64_t)g_config.tpowerdown * 262144ULL / 12000ULL);
 }
 
-// ── Public API ─────────────────────────────────────────────────────────
+// Public API
 
 void status_led_init(uint pin) {
     ws2812_init(pin);
@@ -66,15 +62,18 @@ LedStatus status_led_get() {
 }
 
 void status_led_update() {
-    if (g_config.led_dark_mode) { led_off(); return; }
+    if (g_config.led_dark_mode) {
+        led_off(); return;
+    }
 
     uint32_t elapsed = ms_in_state();
 
     switch (s_status) {
 
-    case LedStatus::OFF:
+    case LedStatus::OFF: {
         led_off();
         break;
+    }
 
     case LedStatus::IDLE: {
         // Brief amber pulse once every 5 s (500 ms fade up/down)
@@ -90,13 +89,15 @@ void status_led_update() {
         break;
     }
 
-    case LedStatus::HOLDING:
+    case LedStatus::HOLDING: {
         led_green();
         break;
+    }
 
-    case LedStatus::MOVING:
+    case LedStatus::MOVING: {
         led_blue();
         break;
+    }
 
     case LedStatus::HOMING: {
         // Breathing blue: triangle wave 0→32→0 over 500 ms cycle
@@ -138,8 +139,9 @@ void status_led_update() {
         break;
     }
 
-    case LedStatus::ERROR:
+    case LedStatus::ERROR:{
         led_red();
         break;
     }
+}
 }

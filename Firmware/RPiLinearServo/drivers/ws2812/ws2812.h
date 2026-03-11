@@ -1,8 +1,5 @@
 #pragma once
 
-// ── ws2812.h ────────────────────────────────────────────────────────────
-// Low-level WS2812 RGB LED driver using PIO1.
-
 #include "pico/types.h"
 #include <cstdint>
 

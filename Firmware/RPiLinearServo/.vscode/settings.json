@@ -49,5 +49,8 @@
     ],
     "python.analysis.extraPaths": [
         "~/.micropico-stubs/included"
-    ]
+    ],
+    "chat.tools.terminal.autoApprove": {
+        "ninja": true
+    }
 }

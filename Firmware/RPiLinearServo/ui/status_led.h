@@ -1,6 +1,5 @@
 #pragma once
 
-// ── status_led.h ────────────────────────────────────────────────────────
 // WS2812 RGB status LED manager.
 // Call status_led_update() from the main loop — it handles flash patterns
 // and timed transitions non-blockingly.

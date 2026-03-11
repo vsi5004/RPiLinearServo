@@ -1,4 +1,3 @@
-// ── usb_stdio.cpp ───────────────────────────────────────────────────────
 // CDC-to-stdio adapter for the composite USB device.
 // Replaces pico_stdio_usb by registering our own stdio driver that talks
 // directly to TinyUSB's CDC class.
@@ -12,14 +11,14 @@
 #include "pico/time.h"
 #include "hardware/irq.h"
 
-#define STDIO_USB_STDOUT_TIMEOUT_US  500000
-#define STDIO_USB_TASK_INTERVAL_US   1000
-#define STDIO_USB_DEADLOCK_TIMEOUT_MS 1000
+static constexpr uint32_t STDIO_USB_STDOUT_TIMEOUT_US   = 500000;
+static constexpr uint32_t STDIO_USB_TASK_INTERVAL_US     = 1000;
+static constexpr uint32_t STDIO_USB_DEADLOCK_TIMEOUT_MS  = 1000;
 
 static mutex_t s_mutex;
 static uint8_t s_low_priority_irq;
 
-// ── Timer → low-priority IRQ to run tud_task() ────────────────────────
+
 static int64_t timer_task(alarm_id_t, void *) {
     if (irq_is_enabled(s_low_priority_irq))
         irq_set_pending(s_low_priority_irq);
@@ -33,7 +32,6 @@ static void low_priority_worker(void) {
     }
 }
 
-// ── stdio driver callbacks ─────────────────────────────────────────────
 static void cdc_out_chars(const char *buf, int length) {
     static uint64_t last_avail_time;
     if (!mutex_try_enter_block_until(&s_mutex,
@@ -100,8 +98,7 @@ static stdio_driver_t stdio_usb_driver = {
 #endif
 };
 
-// ── Public API ─────────────────────────────────────────────────────────
-
+// Public API
 void usb_stdio_init(void) {
     tusb_init();
     mutex_init(&s_mutex);

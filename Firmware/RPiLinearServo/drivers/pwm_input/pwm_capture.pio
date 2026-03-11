@@ -1,4 +1,3 @@
-; ── pwm_capture.pio ──────────────────────────────────────────────────────
 ; PIO program to measure the HIGH time of an RC PWM signal.
 ;
 ; Algorithm:

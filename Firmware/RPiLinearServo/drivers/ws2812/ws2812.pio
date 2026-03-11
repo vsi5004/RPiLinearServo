@@ -1,4 +1,3 @@
-; ── ws2812.pio ────────────────────────────────────────────────────────────
 ; WS2812 / NeoPixel driver — 800 kHz serial protocol.
 ; Uses side-set on 1 pin for data output.
 ;

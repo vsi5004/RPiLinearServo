@@ -1,8 +1,7 @@
 #pragma once
 
-// ── msc_disk.h ──────────────────────────────────────────────────────────
 // Virtual FAT12 disk for USB Mass Storage.
-// Exposes CONFIG.INI (R/W) and STATUS.TXT (RO) on a small RAM-backed volume.
+// Exposes CONFIG.INI (R/W) on a small RAM-backed volume.
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,9 +16,6 @@ bool msc_disk_poll(void);
 
 /// Regenerate CONFIG.INI content from current g_config.
 void msc_disk_refresh(void);
-
-/// Set the STATUS.TXT content (e.g. after config apply result).
-void msc_disk_set_status(const char *text);
 
 #ifdef __cplusplus
 }

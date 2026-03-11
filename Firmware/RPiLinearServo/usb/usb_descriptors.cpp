@@ -1,4 +1,3 @@
-// ── usb_descriptors.cpp ─────────────────────────────────────────────────
 // CDC + MSC composite USB descriptors for RPiLinearServo.
 // CDC provides the serial CLI, MSC exposes the CONFIG.INI virtual drive.
 
@@ -6,12 +5,11 @@
 #include "pico/unique_id.h"
 #include <cstring>
 
-// ── VID / PID ──────────────────────────────────────────────────────────
-#define USB_VID   0x2E8A   // Raspberry Pi
-#define USB_PID   0x4003   // Custom composite CDC+MSC
-#define USB_BCD   0x0200
+static constexpr uint16_t USB_VID = 0x2E8A;   // Raspberry Pi
+static constexpr uint16_t USB_PID = 0x4003;   // Custom composite CDC+MSC
+static constexpr uint16_t USB_BCD = 0x0200;
 
-// ── Interface numbering ────────────────────────────────────────────────
+// Interface numbering
 enum {
     ITF_NUM_CDC = 0,
     ITF_NUM_CDC_DATA,
@@ -19,14 +17,14 @@ enum {
     ITF_NUM_TOTAL
 };
 
-// ── Endpoint addresses ─────────────────────────────────────────────────
-#define EPNUM_CDC_NOTIF  0x81
-#define EPNUM_CDC_OUT    0x02
-#define EPNUM_CDC_IN     0x82
-#define EPNUM_MSC_OUT    0x03
-#define EPNUM_MSC_IN     0x83
+// Endpoint addresses
+static constexpr uint8_t EPNUM_CDC_NOTIF = 0x81;
+static constexpr uint8_t EPNUM_CDC_OUT   = 0x02;
+static constexpr uint8_t EPNUM_CDC_IN    = 0x82;
+static constexpr uint8_t EPNUM_MSC_OUT   = 0x03;
+static constexpr uint8_t EPNUM_MSC_IN    = 0x83;
 
-// ── Device descriptor ──────────────────────────────────────────────────
+// Device descriptor
 static const tusb_desc_device_t desc_device = {
     .bLength            = sizeof(tusb_desc_device_t),
     .bDescriptorType    = TUSB_DESC_DEVICE,
@@ -44,8 +42,8 @@ static const tusb_desc_device_t desc_device = {
     .bNumConfigurations = 1,
 };
 
-// ── Configuration descriptor ───────────────────────────────────────────
-#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_MSC_DESC_LEN)
+// Configuration descriptor
+static constexpr uint16_t CONFIG_TOTAL_LEN = TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_MSC_DESC_LEN;
 
 static const uint8_t desc_configuration[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 250),
@@ -54,7 +52,7 @@ static const uint8_t desc_configuration[] = {
     TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64),
 };
 
-// ── String descriptors ─────────────────────────────────────────────────
+// String descriptors
 enum {
     STRID_LANGID = 0,
     STRID_MANUFACTURER,
@@ -75,7 +73,7 @@ static const char *const string_desc_arr[] = {
     [STRID_MSC]          = "Config Drive",
 };
 
-// ── TinyUSB callbacks ──────────────────────────────────────────────────
+// TinyUSB callbacks
 
 extern "C" const uint8_t *tud_descriptor_device_cb(void) {
     return reinterpret_cast<const uint8_t *>(&desc_device);

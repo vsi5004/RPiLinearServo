@@ -2,25 +2,19 @@
 
 #include <cstdint>
 
-// ── Firmware Version ───────────────────────────────────────────────────
-#define FW_VERSION_MAJOR 0
-#define FW_VERSION_MINOR 1
-#define FW_VERSION_PATCH 0
+constexpr int FW_VERSION_MAJOR = 0;
+constexpr int FW_VERSION_MINOR = 1;
+constexpr int FW_VERSION_PATCH = 0;
 
-// ── Servo Configuration ────────────────────────────────────────────────
-// Compile-time defaults matching SPEC.md §4.
-// Will be replaced by INI-parsed runtime config in a later stage.
+// Compile-time defaults.  Overridden at boot by flash-backed CONFIG.INI.
 
 struct ServoConfig {
-    // ── Stroke ─────────────────────────────────────────────────────────
     float    stroke_mm         = 8.4f;
     float    deadband_mm       = 0.03f;
     float    pos_mismatch_mm   = 0.5f;
     bool     invert_stroke     = false;
 
-    // ── Driver (TMC2209 SilentStepStick) ───────────────────────────────
-    float    full_steps_per_mm = 208.3f;   // motor: ~14000 steps / 8.4mm / 8 microsteps
-    bool     en_active_low     = true;     // TMC2209 nENABLE is active-low
+    float    full_steps_per_mm = 297.6f;   // motor: ~20000 steps / 8.4mm / 8 microsteps
     bool     dir_invert        = false;
 
     // TMC2209 UART configuration (applied at startup via single-wire UART)
@@ -34,14 +28,12 @@ struct ServoConfig {
     // Derived: scales automatically with microsteps
     float steps_per_mm() const { return full_steps_per_mm * microsteps; }
 
-    // ── Motion ─────────────────────────────────────────────────────────
     float    max_speed_mm_s    = 80.0f;    // 25,000 Hz at 583 steps/mm (matched AccelStepper)
     float    default_speed_mm_s = 40.0f;   // ~12,500 Hz CLI default
     float    min_speed_mm_s    = 0.1f;
     float    max_accel_mm_s2   = 80.0f;    // 40,000 steps/s² (matched AccelStepper)
     uint32_t auto_disable_ms   = 2000;     // disable EN after idle (0 = never)
 
-    // ── Homing ─────────────────────────────────────────────────────────
     bool     homing_enable     = true;
     bool     home_dir_negative = true;      // true = home toward negative
     float    home_speed_mm_s   = 10.7f;    // ~half of default move speed
@@ -49,7 +41,6 @@ struct ServoConfig {
     float    home_margin       = 1.1f;      // drive 110% of stroke into hardstop
     float    zero_offset_mm    = 0.0f;
 
-    // ── RC PWM ─────────────────────────────────────────────────────────────
     uint32_t pwm_min_us        = 1000;
     uint32_t pwm_max_us        = 2000;
     uint32_t pwm_timeout_ms    = 100;
@@ -64,16 +55,15 @@ struct ServoConfig {
                / (float)(pwm_max_us - pwm_min_us);
     }
 
-    // ── LED ────────────────────────────────────────────────────────────
     bool     led_dark_mode      = false;   // true = LED stays off at all times
 
-    // ── ADC (placeholder for later) ────────────────────────────────────
-    float    adc_filter_alpha   = 0.1f;
+    bool     use_hall_effect     = false;   // true = use magnetic encoder feedback
 
-    // ── NVM ────────────────────────────────────────────────────────────
+    float    adc_filter_alpha   = 1.0f;   // 1.0 = no filtering (64× oversample is sufficient)
+    float    lost_step_threshold_mv = 30.0f;  // mV deviation to trigger stall fault
+
     uint32_t min_save_interval_s = 30;     // throttle: min seconds between flash writes
 
-    // ── Step Generation Limits ─────────────────────────────────────────
     // Derived convenience: speed in Hz = speed_mm_s * steps_per_mm()
     uint32_t default_speed_hz() const {
         return static_cast<uint32_t>(default_speed_mm_s * steps_per_mm());

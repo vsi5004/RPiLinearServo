@@ -1,13 +1,8 @@
-// ── config_ini.cpp ──────────────────────────────────────────────────────
-// Minimal INI parser for CONFIG.INI.
-// Supports [section], key = value, ';' comments, and blank lines.
-
 #include "config_ini.h"
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
 
-// ── Helpers ────────────────────────────────────────────────────────────
 
 static const char *skip_ws(const char *p) {
     while (*p == ' ' || *p == '\t') p++;
@@ -77,9 +72,8 @@ static bool parse_uint32(const char *val, size_t len, uint32_t &out) {
     return true;
 }
 
-// ── Section/key dispatch ───────────────────────────────────────────────
 
-enum class Section { NONE, STROKE, DRIVER, MOTION, RC_PWM, LED };
+enum class Section { NONE, STROKE, DRIVER, MOTION, RC_PWM, LED, SENSOR };
 
 static bool apply_key(Section sec, const char *key, size_t klen,
                       const char *val, size_t vlen, ServoConfig &cfg,
@@ -92,6 +86,10 @@ static bool apply_key(Section sec, const char *key, size_t klen,
             float v; ok = parse_float(val, vlen, v);
             if (ok && v >= 1.0f && v <= 100.0f) cfg.stroke_mm = v;
             else if (ok) { snprintf(err, esize, "stroke_mm out of range (1-100)"); return false; }
+        } else if (match(key, klen, "full_steps_per_mm")) {
+            float v; ok = parse_float(val, vlen, v);
+            if (ok && v >= 1.0f && v <= 2000.0f) cfg.full_steps_per_mm = v;
+            else if (ok) { snprintf(err, esize, "full_steps_per_mm out of range (1-2000)"); return false; }
         }
         break;
 
@@ -142,6 +140,14 @@ static bool apply_key(Section sec, const char *key, size_t klen,
         }
         break;
 
+    case Section::SENSOR:
+        if (match(key, klen, "use_hall_effect")) {
+            ok = parse_bool(val, vlen, cfg.use_hall_effect);
+        } else if (match(key, klen, "lost_step_threshold_mv")) {
+            ok = parse_float(val, vlen, cfg.lost_step_threshold_mv);
+        }
+        break;
+
     default:
         break;
     }
@@ -153,7 +159,6 @@ static bool apply_key(Section sec, const char *key, size_t klen,
     return true;
 }
 
-// ── Main parser ────────────────────────────────────────────────────────
 
 bool config_ini_parse(const char *ini_text, size_t len,
                       ServoConfig &cfg, char *err_buf, size_t err_size) {
@@ -192,6 +197,7 @@ bool config_ini_parse(const char *ini_text, size_t len,
                 else if (match(sname, slen, "motion"))   section = Section::MOTION;
                 else if (match(sname, slen, "rc_pwm"))   section = Section::RC_PWM;
                 else if (match(sname, slen, "led"))      section = Section::LED;
+                else if (match(sname, slen, "sensor"))   section = Section::SENSOR;
                 else section = Section::NONE;
             }
             p = (eol < end) ? eol + 1 : end;

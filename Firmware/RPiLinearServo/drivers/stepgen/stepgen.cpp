@@ -1,4 +1,3 @@
-// ── stepgen.cpp ─────────────────────────────────────────────────────────
 // PIO-based STEP pulse generator with IRQ-counted position tracking.
 
 #include "stepgen.h"
@@ -16,25 +15,22 @@
 #include <cstdlib>
 #include <cmath>
 
-// ── PIO instance and state machine ─────────────────────────────────────
 static PIO   s_pio       = pio0;
 static uint  s_sm        = 0;
 static uint  s_offset    = 0;
 static uint  s_step_pin  = 0;
 static uint  s_dir_pin   = 0;
 
-// ── Volatile state shared with IRQ handler ─────────────────────────────
 static volatile int32_t  s_position       = 0;   // exact step counter
 static volatile int32_t  s_remaining      = 0;   // steps left (-1 = infinite)
 static volatile bool     s_dir_forward    = true;
 static volatile bool     s_running        = false;
 static volatile bool     s_move_complete  = false;
 
-// ── Non-volatile state ─────────────────────────────────────────────────
+
 static uint32_t s_current_speed_hz = 0;
 static bool     s_initialised      = false;
 
-// ── Trapezoidal ramp profiler ──────────────────────────────────────────
 // A 1 kHz repeating timer adjusts the PIO clock divider to implement
 // acceleration / cruise / deceleration.  The PIO IRQ still handles
 // exact step counting and auto-stop.
@@ -96,7 +92,7 @@ static bool ramp_callback(repeating_timer_t *rt) {
     return true;
 }
 
-// ── IRQ handler ────────────────────────────────────────────────────────
+
 // Called on every PIO-generated STEP rising edge (PIO IRQ0).
 // Body is ~10 instructions — safe at ≤ 10 kHz (100 µs budget).
 static void pio_irq_handler() {
@@ -125,7 +121,6 @@ static void pio_irq_handler() {
     // If s_remaining == -1 (continuous mode), we never stop here.
 }
 
-// ── Public API ─────────────────────────────────────────────────────────
 
 void stepgen_init(uint step_pin, uint dir_pin) {
     s_step_pin = step_pin;
@@ -183,11 +178,24 @@ uint32_t stepgen_set_speed_hz(uint32_t hz) {
     return actual;
 }
 
+// Reset the PIO SM to the start of the program so we never resume
+// mid-cycle from a previous move (avoids phantom step on re-enable).
+static void stepgen_sm_restart() {
+    pio_sm_set_enabled(s_pio, s_sm, false);
+    pio_sm_clear_fifos(s_pio, s_sm);
+    pio_sm_restart(s_pio, s_sm);
+    pio_sm_exec(s_pio, s_sm, pio_encode_set(pio_pins, 0)); // STEP low
+    pio_sm_exec(s_pio, s_sm, pio_encode_jmp(s_offset));     // PC → start
+}
+
 void stepgen_move(int32_t steps, uint32_t speed_hz) {
     if (!s_initialised || steps == 0) return;
 
     // Cancel any active ramp (constant-speed move)
     s_ramp_phase = RampPhase::IDLE;
+
+    // Reset SM to clean state
+    stepgen_sm_restart();
 
     // Set direction from sign
     stepgen_set_dir(steps > 0);
@@ -213,14 +221,15 @@ void stepgen_move_accel(int32_t steps, uint32_t max_speed_hz, uint32_t accel_hz_
         return;
     }
 
+    // Park ramp before touching any shared state — prevents the 1 kHz
+    // ramp callback from seeing ACCEL while s_running is still false.
+    s_ramp_phase = RampPhase::IDLE;
+
+    // Reset SM to clean state (no phantom step from resumed program counter)
+    stepgen_sm_restart();
+
     // Set direction from sign
     stepgen_set_dir(steps > 0);
-
-    // Initialise ramp state
-    s_ramp_speed = RAMP_MIN_HZ;
-    s_ramp_max   = (float)max_speed_hz;
-    s_ramp_accel = (float)accel_hz_per_s;
-    s_ramp_phase = RampPhase::ACCEL;
 
     // Set initial PIO speed to the ramp start speed
     stepgen_set_frequency(s_pio, s_sm, (uint32_t)RAMP_MIN_HZ);
@@ -231,6 +240,13 @@ void stepgen_move_accel(int32_t steps, uint32_t max_speed_hz, uint32_t accel_hz_
     s_move_complete = false;
     s_running       = true;
 
+    // Initialise ramp state — s_running is already true so the callback
+    // won't immediately kill the ramp.
+    s_ramp_speed = RAMP_MIN_HZ;
+    s_ramp_max   = (float)max_speed_hz;
+    s_ramp_accel = (float)accel_hz_per_s;
+    s_ramp_phase = RampPhase::ACCEL;
+
     // Go!
     stepgen_pio_start(s_pio, s_sm);
 }
@@ -240,6 +256,9 @@ void stepgen_run(uint32_t speed_hz) {
 
     // Cancel any active ramp (continuous constant-speed)
     s_ramp_phase = RampPhase::IDLE;
+
+    // Reset SM to clean state
+    stepgen_sm_restart();
 
     stepgen_set_speed_hz(speed_hz);
 

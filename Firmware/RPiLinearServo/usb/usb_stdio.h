@@ -1,6 +1,5 @@
 #pragma once
 
-// ── usb_stdio.h ─────────────────────────────────────────────────────────
 // Thin CDC-to-stdio bridge for composite USB (replaces pico_stdio_usb).
 // Call usb_stdio_init() instead of stdio_init_all().
 

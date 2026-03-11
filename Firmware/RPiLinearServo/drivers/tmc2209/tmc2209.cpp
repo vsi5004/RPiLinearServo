@@ -1,4 +1,3 @@
-// ── tmc2209.cpp ──────────────────────────────────────────────────────────
 // TMC2209 SilentStepStick register driver via hardware UART1.
 //
 // PCB wiring (RP2040-Zero):
@@ -21,17 +20,16 @@
 #include <cstdio>
 #include <cstring>
 
-// ── Configuration ──────────────────────────────────────────────────────
-#define TMC2209_BAUD        115200
-#define TMC2209_SLAVE_ADDR  0x00    // MS1=0, MS2=0 on SilentStepStick
-#define TMC2209_SYNC        0x05
+static constexpr uint32_t TMC2209_BAUD       = 115200;
+static constexpr uint8_t  TMC2209_SLAVE_ADDR  = 0x00;   // MS1=0, MS2=0 on SilentStepStick
+static constexpr uint8_t  TMC2209_SYNC        = 0x05;
 
-#define TMC_UART            uart1   // GP4=UART1_TX, GP5=UART1_RX
+#define TMC_UART  uart1   // GP4=UART1_TX, GP5=UART1_RX (SDK pointer macro)
 
 
 static uint s_tx_pin   = 0;
 
-// ── CRC-8 (TMC2209 polynomial 0x07) ────────────────────────────────────
+// CRC-8 (TMC2209 polynomial 0x07)
 static uint8_t crc8(const uint8_t *data, uint8_t len) {
     uint8_t crc = 0;
     for (uint8_t i = 0; i < len; i++) {
@@ -48,7 +46,7 @@ static uint8_t crc8(const uint8_t *data, uint8_t len) {
     return crc;
 }
 
-// ── Low-level byte TX/RX ────────────────────────────────────────────────
+// Low-level byte TX/RX
 
 // Read one byte from UART1 with timeout.  Returns -1 on timeout.
 static int uart_getc_timeout_us(uint32_t timeout_us) {
@@ -67,7 +65,7 @@ static void uart_drain() {
     }
 }
 
-// ── Datagram helpers ───────────────────────────────────────────────────
+// Datagram helpers
 
 // Release the TX pin (set as GPIO input) so the TMC2209 can drive the bus.
 static void tx_tristate() {
@@ -95,7 +93,7 @@ static void send_bytes(const uint8_t *buf, uint8_t n) {
     uart_drain();
 }
 
-// ── Public API ─────────────────────────────────────────────────────────
+// Public API
 
 void tmc2209_write_reg(uint8_t reg, uint32_t value) {
     uint8_t buf[8];
@@ -120,26 +118,26 @@ uint32_t tmc2209_read_reg(uint8_t reg) {
     req[2] = reg;                  // no write bit
     req[3] = crc8(req, 3);
 
-    // ── Step 1: Clear any stale RX data ────────────────────────────────
+    // Step 1: Clear any stale RX data
     uart_drain();
 
-    // ── Step 2: Send read request ──────────────────────────────────────
+    // Step 2: Send read request
     uart_write_blocking(TMC_UART, req, 4);
 
     // Wait for TX shift register to fully clock out all 4 bytes.
     // Pico SDK: uart_tx_wait_blocking waits until TX FIFO + shift register empty.
     uart_tx_wait_blocking(TMC_UART);
 
-    // ── Step 3: Read back 4 echo bytes (our own TX reflected on the bus) ─
+    // Step 3: Read back 4 echo bytes (our own TX reflected on the bus)
     for (int i = 0; i < 4; i++) {
         int b = uart_getc_timeout_us(5000);
         (void)b;   // discard echo
     }
 
-    // ── Step 4: Release TX pin so TMC2209 can drive the bus ────────────
+    // Step 4: Release TX pin so TMC2209 can drive the bus
     tx_tristate();
 
-    // ── Step 5: Read 8-byte reply ──────────────────────────────────────
+    // Step 5: Read 8-byte reply
     // TMC2209 replies after ~4-8 byte-times.  We already consumed time
     // draining the echo, so the reply may already be arriving.
     uint8_t reply[8] = {0};
@@ -150,7 +148,7 @@ uint32_t tmc2209_read_reg(uint8_t reg) {
         reply[i] = (uint8_t)b;
     }
 
-    // ── Step 6: Restore TX pin ─────────────────────────────────────────
+    // Step 6: Restore TX pin
     tx_enable();
     sleep_us(100);   // let UART TX re-stabilize
 
@@ -174,7 +172,7 @@ uint32_t tmc2209_read_reg(uint8_t reg) {
 }
 
 
-// ── Helpers for IHOLD_IRUN and MRES ──────────────────────────────────
+// Helpers for IHOLD_IRUN and MRES
 
 // Convert mA to TMC2209 current scale (CS) value.
 // I_RMS = (CS+1)/32 × V_FS/(√2 × R_sense)
@@ -199,8 +197,6 @@ static uint8_t microsteps_to_mres(uint16_t ms) {
     if (ms >=   2) return 7;
     return 8;  // full step
 }
-
-// ── Init and configure ────────────────────────────────────────────────
 
 bool tmc2209_init(uint tx_pin, uint rx_pin) {
     s_tx_pin   = tx_pin;
@@ -227,11 +223,11 @@ bool tmc2209_configure(const ServoConfig &cfg) {
     printf("[tmc2209] IFCNT before = %lu\n", (unsigned long)ifcnt_before);
     sleep_ms(10);
 
-    // ── Clear GSTAT (write 0x07 to clear all flags) ───────────────────
+    // Clear GSTAT (write 0x07 to clear all flags)
     tmc2209_write_reg(TMC2209_REG_GSTAT, 0x07);
     sleep_ms(10);
 
-    // ── GCONF ───────────────────────────────────────────────────────────
+    // GCONF
     // bit 0 (I_scale_analog): 0 = use internal 5VOUT ref (ignore VREF pot on SilentStepStick)
     // bit 2 (en_SpreadCycle): 0 = StealthChop, 1 = SpreadCycle
     // bit 6 (pdn_disable): MUST be 1 when using UART
@@ -248,7 +244,7 @@ bool tmc2209_configure(const ServoConfig &cfg) {
            (rb_gconf != gconf) ? " (mismatch, accepting)" : " OK");
     sleep_ms(10);
 
-    // ── IHOLD_IRUN ─────────────────────────────────────────────────────
+    // IHOLD_IRUN
     uint8_t cs_run  = ma_to_cs(cfg.run_current_ma);
     uint8_t cs_hold = ma_to_cs(cfg.hold_current_ma);
     uint32_t ihold_irun = ((uint32_t)6       << 16)   // IHOLDDELAY
@@ -257,7 +253,7 @@ bool tmc2209_configure(const ServoConfig &cfg) {
     tmc2209_write_reg(TMC2209_REG_IHOLD_IRUN, ihold_irun);
     sleep_ms(10);
 
-    // ── CHOPCONF ───────────────────────────────────────────────────────
+    // CHOPCONF
     // Read-modify-write: only change MRES and intpol, preserve OTP defaults
     // for TOFF/HSTRT/HEND/TBL/vsense so StealthChop auto-tuning stays intact.
     uint8_t  mres = microsteps_to_mres(cfg.microsteps);
@@ -277,12 +273,12 @@ bool tmc2209_configure(const ServoConfig &cfg) {
            (unsigned long)rb_chop, (unsigned long)chopconf);
     sleep_ms(10);
 
-    // ── TPOWERDOWN ─────────────────────────────────────────────────────
+    // TPOWERDOWN
     tmc2209_write_reg(TMC2209_REG_TPOWERDOWN, cfg.tpowerdown);
     sleep_ms(10);
 
 
-    // ── Verify & DRV_STATUS ──────────────────────────────────────────────
+    // Verify & DRV_STATUS
     sleep_ms(20);
     uint32_t rb_gconf2   = tmc2209_read_reg(TMC2209_REG_GCONF);
     sleep_ms(5);

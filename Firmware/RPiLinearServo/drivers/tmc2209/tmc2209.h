@@ -1,6 +1,5 @@
 #pragma once
 
-// ── tmc2209.h ─────────────────────────────────────────────────────────────
 // TMC2209 SilentStepStick driver — hardware UART1 register access + startup config.
 //
 // PCB wiring (RP2040-Zero):
@@ -16,18 +15,15 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// ── Key register addresses ──────────────────────────────────────────────
-#define TMC2209_REG_GCONF       0x00
-#define TMC2209_REG_GSTAT       0x01
-#define TMC2209_REG_IFCNT       0x02
-#define TMC2209_REG_IHOLD_IRUN  0x10
-#define TMC2209_REG_TPOWERDOWN  0x11
-#define TMC2209_REG_TSTEP       0x12
-#define TMC2209_REG_TPWMTHRS    0x13
-#define TMC2209_REG_CHOPCONF    0x6C
-#define TMC2209_REG_DRV_STATUS  0x6F
-
-// ── Public API ─────────────────────────────────────────────────────────
+constexpr uint8_t TMC2209_REG_GCONF       = 0x00;
+constexpr uint8_t TMC2209_REG_GSTAT       = 0x01;
+constexpr uint8_t TMC2209_REG_IFCNT       = 0x02;
+constexpr uint8_t TMC2209_REG_IHOLD_IRUN  = 0x10;
+constexpr uint8_t TMC2209_REG_TPOWERDOWN  = 0x11;
+constexpr uint8_t TMC2209_REG_TSTEP       = 0x12;
+constexpr uint8_t TMC2209_REG_TPWMTHRS    = 0x13;
+constexpr uint8_t TMC2209_REG_CHOPCONF    = 0x6C;
+constexpr uint8_t TMC2209_REG_DRV_STATUS  = 0x6F;
 
 // Initialise hardware UART1 (TX on tx_pin, RX on rx_pin).
 // Returns true on success.
