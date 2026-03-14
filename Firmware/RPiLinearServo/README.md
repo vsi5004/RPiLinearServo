@@ -49,14 +49,52 @@ The firmware runs a single-core bare-metal event loop (`main.cpp`). There is no 
 main loop
   ├── cli_poll()                  USB command processing (non-blocking)
   ├── msc_disk_poll()             Detect CONFIG.INI writes → apply settings
-  ├── servo_loop_poll()           PWM tracking, homing, post-move verification
-  │     ├── poll_pwm_input()          Position tracking from RC signal
-  │     ├── poll_move_complete()      Hall-based lost-step detection
-  │     ├── poll_auto_disable()       Idle timeout → disable driver
-  │     └── poll_hall_logging()       250 Hz hall sampling during moves
+  ├── servo_loop_poll()           Servo state machine (see below)
   ├── status_led_update()         WS2812 LED animation state machine
   └── position_save_if_needed()   Throttled NVM write (≤ once per 30 s)
 ```
+
+### Servo loop state machine (`motion/servo_loop.cpp`)
+
+All motor control — whether initiated by PWM input or the USB CLI — flows through a single state machine.  This guarantees that the driver enable pin, LED status, and idle timeout are always consistent regardless of the command source.
+
+```
+  ┌──────┐   first valid PWM   ┌────────┐  blocking   ┌─────────┐
+  │ IDLE │ ─────────────────► │ HOMING │ ──────────► │ HOLDING │
+  └──┬───┘                     └────────┘             └────┬────┘
+     │  move cmd / PWM error                               │
+     │  ┌────────┐  move complete   ┌─────────┐            │
+     └►│ MOVING │ ────────────────►│ HOLDING │◄───────────┘
+       └────────┘                   └────┬────┘
+                                         │ auto_disable_ms timeout
+                                         │ or PWM signal lost
+                                         ▼
+                                      ┌──────┐
+                                      │ IDLE │
+                                      └──────┘
+```
+
+**States:**
+
+| State | EN pin | LED | Description |
+|---|---|---|---|
+| IDLE | Disabled | Amber breathing | Motor off, waiting for input or dormant entry |
+| HOMING | Enabled | Blue breathing | Blocking hardstop homing in progress |
+| MOVING | Enabled | Solid blue | Stepgen actively running toward a target |
+| HOLDING | Enabled | Solid green | At target, idle timer counting toward auto-disable |
+
+Transitions are evaluated once per poll in a single `switch` block.  The `enter_state()` helper is the **only** place that touches the EN pin or LED status, eliminating any possibility of EN/LED desynchronisation.
+
+**Public API** (used by both CLI and PWM tracking):
+
+| Function | Description |
+|---|---|
+| `servo_loop_move(steps, speed, accel)` | Start an accelerated finite move |
+| `servo_loop_run(speed)` | Start continuous stepping |
+| `servo_loop_stop()` | Stop and enter HOLDING |
+| `servo_loop_enable()` | Enable driver (IDLE → HOLDING) |
+| `servo_loop_disable()` | Disable driver (any → IDLE) |
+| `servo_loop_home()` | Run blocking homing sequence |
 
 ### Interrupt / real-time layer
 
@@ -127,12 +165,14 @@ Post-wake sequence: restore PLLs and system clock, re-initialise all peripherals
 
 ### Servo Loop (`motion/`)
 
-The top-level motion coordinator, polled from the main loop:
+The top-level motion coordinator.  An explicit state machine (IDLE → HOMING → MOVING → HOLDING) polled from the main loop.  All motor commands — from both the USB CLI and PWM tracking — flow through the same `servo_loop_*` API, ensuring EN pin, LED, and timeout state are always consistent.
 
+Key behaviours:
 - **PWM tracking** — maps pulse width to a target position, applies deadband, and commands moves with acceleration
 - **Auto-home** — triggers homing on the first valid PWM pulse if not already homed
 - **Post-move verification** — after each move settles, compares the hall sensor reading against the calibration LUT and attempts a single correction if a mismatch is detected
-- **Auto-disable** — disables the driver after `auto_disable_ms` of idle time
+- **Auto-disable** — disables the driver after `auto_disable_ms` of idle time (HOLDING → IDLE)
+- **PWM signal loss** — if the PWM signal drops during a move, the servo transitions directly from MOVING to IDLE on completion rather than lingering in HOLDING
 
 ### Homing (`motion/homing.cpp`)
 
@@ -176,7 +216,7 @@ WS2812 state machine with the following visual states:
 | IDLE | Amber breathing pulse (~5 s period) |
 | HOLDING | Solid green |
 | MOVING | Solid blue |
-| HOMING | Rapid blue flash (100 ms period) |
+| HOMING | Breathing blue (500 ms cycle) |
 | HOMING_DONE | 3× green flash → HOLDING |
 | STALL_FAULT | Rapid red flash |
 | ERROR | Solid red |

@@ -56,7 +56,7 @@ struct ServoConfig {
     uint32_t pwm_max_us        = 2000;
     uint32_t pwm_timeout_ms    = 100;
     bool     pwm_zero_disables = true;
-    uint32_t pwm_valid_margin  = 50;
+    uint32_t pwm_valid_margin  = 150;
 
     /// Map a validated pulse width (µs) to a position in [0, stroke_mm].
     float pwm_to_mm(uint32_t pulse_us) const {

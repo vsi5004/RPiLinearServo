@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.1.0] - 2026-03-14
+
+### Changed
+- Servo loop rewritten as an explicit state machine (IDLE / HOMING / MOVING /
+  HOLDING) with a single `enter_state()` function controlling the EN pin and
+  LED — eliminates all EN/LED desynchronisation bugs
+- CLI commands (`move`, `run`, `stop`, `home`, `enable`, `disable`, `faultclr`)
+  now go through the `servo_loop_*()` API instead of directly manipulating
+  GPIO and LED state, ensuring consistent behaviour with PWM-driven moves
+- When the PWM signal drops during a long move, the servo transitions directly
+  from MOVING to IDLE on completion instead of lingering in HOLDING
+- PWM valid margin widened from 50 µs to 150 µs so signals slightly outside
+  the 1000–2000 µs window are accepted
+- Stepper driver is no longer disabled mid-move when PWM times out; the
+  `pwm_zero_disables` timeout now waits until the move finishes
+
+### Removed
+- `ramp` CLI command (superseded by the built-in trapezoidal acceleration
+  profiler in `stepgen_move_accel`)
+
 ## [v1.0.0] - 2026-03-11
 
 ### Added

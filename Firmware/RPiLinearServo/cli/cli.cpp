@@ -1,4 +1,5 @@
 #include "cli.h"
+#include "servo_loop.h"
 #include "stepgen.h"
 #include "homing.h"
 #include "tmc2209.h"
@@ -87,7 +88,6 @@ static void cmd_help() {
     printf("  disable                  Disable motor driver\n");
     printf("  dir <fwd|rev>            Set direction for 'run'\n");
     printf("  speed <hz>               Set default speed\n");
-    printf("  ramp <from> <to> <steps> Linear speed ramp\n");
     printf("  pos                      Print position\n");
     printf("  status                   Print full status\n");
     printf("  pwm                      Print PWM input status\n");
@@ -120,9 +120,7 @@ static void cmd_move(char *args) {
     printf("move %ld steps @ %lu Hz  accel=%lu Hz/s\n",
            (long)steps, (unsigned long)hz,
            (unsigned long)g_config.accel_hz_per_s());
-    gpio_put(PIN_EN, EN_ENABLE);
-    status_led_set(LedStatus::MOVING);
-    stepgen_move_accel(steps, hz, g_config.accel_hz_per_s());
+    servo_loop_move(steps, hz, g_config.accel_hz_per_s());
 }
 
 static void cmd_run(char *args) {
@@ -130,35 +128,30 @@ static void cmd_run(char *args) {
     uint32_t hz = tok ? (uint32_t)atoi(tok) : s_default_speed_hz;
     if (hz == 0) hz = s_default_speed_hz;
     printf("run @ %lu Hz\n", (unsigned long)hz);
-    gpio_put(PIN_EN, EN_ENABLE);
-    status_led_set(LedStatus::MOVING);
-    stepgen_run(hz);
+    servo_loop_run(hz);
 }
 
 static void cmd_stop() {
-    stepgen_stop();
+    servo_loop_stop();
     printf("stopped at pos %ld\n", (long)stepgen_get_position());
-    status_led_set(LedStatus::HOLDING);
 }
 
 static void cmd_home() {
     if (stepgen_is_busy()) {
         printf("error: motor busy — stop first\n");
         return;
-    }    gpio_put(PIN_EN, EN_ENABLE);    homing_run();
+    }
+    servo_loop_home();
 }
 
 static void cmd_enable() {
-    gpio_put(PIN_EN, EN_ENABLE);
+    servo_loop_enable();
     printf("driver enabled\n");
-    status_led_set(LedStatus::HOLDING);
 }
 
 static void cmd_disable() {
-    stepgen_stop();
-    gpio_put(PIN_EN, EN_DISABLE);
+    servo_loop_disable();
     printf("driver disabled\n");
-    status_led_set(LedStatus::OFF);
 }
 
 static void cmd_dir(char *args) {
@@ -186,53 +179,6 @@ static void cmd_speed(char *args) {
     }
     s_default_speed_hz = (uint32_t)atoi(tok);
     printf("default speed set to %lu Hz\n", (unsigned long)s_default_speed_hz);
-}
-
-static void cmd_ramp(char *args) {
-    char *tok1 = next_token(&args);
-    char *tok2 = next_token(&args);
-    char *tok3 = next_token(&args);
-    if (!tok1 || !tok2 || !tok3) {
-        printf("usage: ramp <from_hz> <to_hz> <steps>\n");
-        return;
-    }
-    uint32_t from_hz   = (uint32_t)atoi(tok1);
-    uint32_t to_hz     = (uint32_t)atoi(tok2);
-    int32_t  steps     = atoi(tok3);
-    if (steps == 0 || from_hz == 0 || to_hz == 0) {
-        printf("error: all values must be non-zero\n");
-        return;
-    }
-
-    int32_t  abs_steps  = steps > 0 ? steps : -steps;
-    printf("ramp %lu → %lu Hz over %ld steps\n",
-           (unsigned long)from_hz, (unsigned long)to_hz, (long)steps);
-
-    // Start continuous stepping at initial speed
-    stepgen_set_dir(steps > 0);
-    stepgen_set_speed_hz(from_hz);
-    gpio_put(PIN_EN, EN_ENABLE);
-    status_led_set(LedStatus::MOVING);
-    stepgen_run(from_hz);
-
-    // Ramp speed linearly based on position
-    int32_t start_pos = stepgen_get_position();
-    while (true) {
-        int32_t elapsed = stepgen_get_position() - start_pos;
-        if (steps > 0 && elapsed < 0) elapsed = -elapsed;
-        if (steps < 0) elapsed = -elapsed;
-        if (elapsed >= abs_steps) break;
-
-        // Linear interpolation
-        float t = (float)elapsed / (float)abs_steps;
-        uint32_t hz = from_hz + (uint32_t)(t * (float)((int32_t)to_hz - (int32_t)from_hz));
-        stepgen_set_speed_hz(hz);
-        sleep_ms(2);
-    }
-
-    stepgen_stop();
-    printf("ramp complete at pos %ld\n", (long)stepgen_get_position());
-    status_led_set(LedStatus::HOLDING);
 }
 
 static void cmd_pos() {
@@ -385,7 +331,6 @@ static void cli_process_line(char *line) {
     else if (strcmp(cmd, "disable") == 0) cmd_disable();
     else if (strcmp(cmd, "dir")     == 0) cmd_dir(line);
     else if (strcmp(cmd, "speed")   == 0) cmd_speed(line);
-    else if (strcmp(cmd, "ramp")    == 0) cmd_ramp(line);
     else if (strcmp(cmd, "pos")     == 0) cmd_pos();
     else if (strcmp(cmd, "status")  == 0) cmd_status();
     else if (strcmp(cmd, "diag")    == 0) cmd_diag();
@@ -393,7 +338,7 @@ static void cli_process_line(char *line) {
     else if (strcmp(cmd, "nvm")     == 0) cmd_nvm(line);
     else if (strcmp(cmd, "faultclr") == 0) {
         g_stall_fault = false;
-        status_led_set(LedStatus::HOLDING);
+        servo_loop_enable();
         printf("stall fault cleared\n");
     }
     else if (strcmp(cmd, "hall")    == 0) {

@@ -41,7 +41,17 @@ void pwm_input_poll() {
         count = pio_sm_get(s_pio, s_sm);
         got   = true;
     }
-    if (!got) return;
+    if (!got) {
+        // No new data — expire validity after timeout so downstream
+        // code sees the clean true→false transition it expects.
+        if (s_valid && s_ever_valid) {
+            uint64_t elapsed = absolute_time_diff_us(s_last_valid_at,
+                                                      get_absolute_time());
+            if (elapsed > (uint64_t)g_config.pwm_timeout_ms * 1000)
+                s_valid = false;
+        }
+        return;
+    }
 
     // Convert PIO counts → microseconds
     float us_f  = count * s_counts_to_us;

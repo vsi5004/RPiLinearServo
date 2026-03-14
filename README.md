@@ -94,7 +94,6 @@ Commands:
   disable                  Disable motor driver
   dir <fwd|rev>            Set direction for 'run'
   speed <hz>               Set default speed
-  ramp <from> <to> <steps> Linear speed ramp
   pos                      Print position
   status                   Print full status
   pwm                      Print PWM input status
@@ -104,6 +103,8 @@ Commands:
   faultclr                 Clear stall fault
   help                     This message
 ```
+
+CLI commands go through the same servo loop state machine as PWM-driven moves, so LED and driver enable behaviour is always consistent.
 
 ## Project Structure
 
